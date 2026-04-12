@@ -163,4 +163,4 @@ dotnet test tests/CortexPlexus.Integration.Tests  # pgvector container
 
 Every push to `main` and every pull request triggers the full test suite via GitHub Actions. Test results are published as GitHub Check annotations — click any workflow run to see the per-test breakdown with pass/fail/skip counts and durations.
 
-See: [Build & Test workflow](../.github/workflows/build-and-test.yml) | [Latest runs](https://github.com/DT-Tuan/cortexplexus/actions/workflows/build-and-test.yml)
+See: [Build & Test workflow](../.github/workflows/build-and-test.yml) | [Latest runs](https://github.com/DT-Tuan/CortexPlexus/actions/workflows/build-and-test.yml)

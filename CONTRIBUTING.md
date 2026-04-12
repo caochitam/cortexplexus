@@ -45,7 +45,7 @@ Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDU
 ### Clone + build
 
 ```bash
-git clone https://github.com/DT-Tuan/cortexplexus.git
+git clone https://github.com/DT-Tuan/CortexPlexus.git
 cd cortexplexus
 dotnet build src/CortexPlexus.App/CortexPlexus.App.csproj
 ```
@@ -158,4 +158,4 @@ By contributing, you agree that your contributions will be licensed under the [M
 
 ## Questions?
 
-Open a [discussion](https://github.com/DT-Tuan/cortexplexus/discussions) or file an issue.
+Open a [discussion](https://github.com/DT-Tuan/CortexPlexus/discussions) or file an issue.

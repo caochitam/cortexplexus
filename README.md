@@ -4,7 +4,7 @@
 
 Pull, `docker compose up`, connect your IDE, done. **100% free and self-hosted.**
 
-[![Build & Test](https://github.com/DT-Tuan/cortexplexus/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/DT-Tuan/cortexplexus/actions/workflows/build-and-test.yml)
+[![Build & Test](https://github.com/DT-Tuan/CortexPlexus/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/DT-Tuan/CortexPlexus/actions/workflows/build-and-test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](https://dotnet.microsoft.com/)
 [![Tests](https://img.shields.io/badge/tests-693%20passing-brightgreen)](docs/TESTING.md)
@@ -29,7 +29,7 @@ AI coding assistants (Claude, Cursor, Copilot) read your files as plain text —
 
 ```bash
 # 1. Clone
-git clone https://github.com/DT-Tuan/cortexplexus.git
+git clone https://github.com/DT-Tuan/CortexPlexus.git
 cd cortexplexus
 
 # 2. (Optional) Configure embedding provider
