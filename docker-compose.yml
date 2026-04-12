@@ -6,7 +6,7 @@
 
 services:
   postgres:
-    image: ghcr.io/dt-tuan/cortexplexus-postgres:latest
+    image: ghcr.io/dt-tuan/cortexplexus-postgres:main
     # To build from source instead: comment out 'image' and uncomment 'build':
     # build:
     #   context: ./docker/postgres
@@ -25,7 +25,7 @@ services:
       retries: 5
 
   cortexplexus:
-    image: ghcr.io/dt-tuan/cortexplexus:latest
+    image: ghcr.io/dt-tuan/cortexplexus:main
     # To build from source instead: comment out 'image' and uncomment 'build':
     # build:
     #   context: .
