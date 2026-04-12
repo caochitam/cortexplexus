@@ -1,0 +1,519 @@
+using CortexPlexus.Core.Abstractions;
+using CortexPlexus.Core.Models;
+using CortexPlexus.Embedding;
+using CortexPlexus.Parsing.Markdown;
+using CortexPlexus.Parsing.TreeSitter;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace CortexPlexus.App.Indexing;
+
+public sealed class IndexingPipeline(
+    ICodeParser parser,
+    TreeSitterCodeParser treeSitterParser,
+    MarkdownParser markdownParser,
+    IGraphStore graphStore,
+    IVectorStore vectorStore,
+    IEmbeddingService embeddingService,
+    ISecretsScanner secretsScanner,
+    IRepositoryStore repositoryStore,
+    ISummaryGenerator summaryGenerator,
+    IOptions<EmbeddingOptions> embeddingOptions,
+    ILogger<IndexingPipeline> logger)
+{
+    private readonly EmbeddingOptions _embeddingOptions = embeddingOptions.Value;
+
+    public async Task<IndexingStats> IndexAsync(string path, CancellationToken ct = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Repository = root directory (like a GitHub repo)
+        // All sub-projects inside belong to the same repository
+        var repoName = DetectProjectName(path);
+        var repo = await repositoryStore.GetByPathAsync(path, ct)
+            ?? await repositoryStore.RegisterAsync(repoName, path, ct);
+
+        logger.LogInformation("Repository: {Name} ({Path})", repo.Name, repo.Path);
+
+        // Check for changed files (incremental indexing)
+        var changedFiles = await GetChangedFilesAsync(path, repo.Id, ct);
+        if (changedFiles is { Count: 0 })
+        {
+            logger.LogInformation("No files changed since last index. Skipping.");
+            return new IndexingStats(sw.Elapsed, 0, 0, 0);
+        }
+
+        // Parse ALL C# solutions/projects in the repo (not just the first one)
+        var allSymbols = new List<CodeSymbol>();
+        var allRelationships = new List<Relationship>();
+        var totalFiles = 0;
+        var totalErrors = 0;
+
+        var solutionPaths = FindAllSolutionsAndProjects(path);
+
+        // C# parsing requires .NET SDK (Roslyn MSBuildWorkspace)
+        var hasDotnetSdk = HasDotnetSdk();
+        var csharpSkipped = false;
+
+        if (solutionPaths.Count > 0 && !hasDotnetSdk)
+        {
+            csharpSkipped = true;
+            logger.LogWarning(
+                "C# projects found ({Count} .sln/.csproj) but .NET SDK is not available. " +
+                "Skipping Roslyn parsing. Use CortexPlexus Local Agent to index C# projects — " +
+                "it runs on your dev machine where SDK is installed.",
+                solutionPaths.Count);
+        }
+
+        if (solutionPaths.Count > 0 && hasDotnetSdk)
+        {
+            // Auto-restore NuGet packages so Roslyn can resolve symbols
+            await RestoreNuGetAsync(solutionPaths, ct);
+
+            foreach (var solutionPath in solutionPaths)
+            {
+                ParseResult csharpResult;
+                if (changedFiles is null)
+                {
+                    logger.LogInformation("Parsing C#: {SolutionPath}...", solutionPath);
+                    csharpResult = await parser.ParseSolutionAsync(solutionPath, ct);
+                }
+                else
+                {
+                    var csChanged = changedFiles.Where(f => f.EndsWith(".cs")).ToList();
+                    if (csChanged.Count > 0)
+                    {
+                        logger.LogInformation("Incremental C#: {Count} files changed", csChanged.Count);
+                        csharpResult = await parser.ParseFilesAsync(csChanged, solutionPath, ct);
+                    }
+                    else
+                    {
+                        csharpResult = new ParseResult([], [], TimeSpan.Zero, 0, 0);
+                    }
+                }
+                allSymbols.AddRange(csharpResult.Symbols);
+                allRelationships.AddRange(csharpResult.Relationships);
+                totalFiles += csharpResult.FilesProcessed;
+                totalErrors += csharpResult.ErrorCount;
+            }
+        }
+
+        // Parse TypeScript/JavaScript/Python (Tree-sitter) — scans entire repo directory
+        var tsResult = await treeSitterParser.ParseSolutionAsync(path, ct);
+        if (tsResult.Symbols.Count > 0)
+        {
+            logger.LogInformation("Tree-sitter: {Symbols} symbols, {Rels} relationships from {Files} files",
+                tsResult.Symbols.Count, tsResult.Relationships.Count, tsResult.FilesProcessed);
+            allSymbols.AddRange(tsResult.Symbols);
+            allRelationships.AddRange(tsResult.Relationships);
+            totalFiles += tsResult.FilesProcessed;
+        }
+
+        // Parse Markdown documents
+        var mdResult = markdownParser.ParseDirectory(path);
+        if (mdResult.Symbols.Count > 0)
+        {
+            allSymbols.AddRange(mdResult.Symbols);
+            allRelationships.AddRange(mdResult.Relationships);
+            totalFiles += mdResult.FilesProcessed;
+        }
+
+        totalErrors += tsResult.ErrorCount + mdResult.ErrorCount;
+        var parseResult = new ParseResult(allSymbols, allRelationships, sw.Elapsed, totalFiles, totalErrors);
+        logger.LogInformation("Parsed {Files} files: {Symbols} symbols, {Rels} relationships, {Errors} errors",
+            parseResult.FilesProcessed, parseResult.Symbols.Count, parseResult.Relationships.Count, parseResult.ErrorCount);
+
+        if (parseResult.Symbols.Count == 0)
+        {
+            logger.LogWarning("No symbols extracted.");
+            return new IndexingStats(sw.Elapsed, parseResult.FilesProcessed, 0, 0);
+        }
+
+        // Set RepoId on symbols
+        var symbols = parseResult.Symbols
+            .Select(s => SetRepoId(s, repo.Id))
+            .ToList();
+
+        // Generate embeddings for methods and classes
+        var embeddable = symbols
+            .Where(s => s.Kind is "class" or "method" or "interface" or "struct" or "record" or "function" or "type" or "document" or "section")
+            .ToList();
+
+        logger.LogInformation("Generating embeddings for {Count} symbols...", embeddable.Count);
+        var embeddings = await GenerateEmbeddingsAsync(embeddable, ct);
+
+        var embeddedCount = embeddings.Count;
+        var failedEmbeddings = embeddable.Count - embeddedCount;
+        logger.LogInformation("Generated {Count} embeddings.", embeddedCount);
+        if (failedEmbeddings > 0)
+            logger.LogWarning("{Count} symbols failed to embed — semantic search will not cover them", failedEmbeddings);
+
+        // Generate AI summaries for methods (optional, requires LLM)
+        if (summaryGenerator.IsEnabled)
+        {
+            symbols = await GenerateSummariesAsync(symbols, ct);
+        }
+
+        // Write to stores with verification
+        var validSymbols = symbols.Where(s => !string.IsNullOrWhiteSpace(s.Fqn)).ToList();
+        var validRelationships = parseResult.Relationships
+            .Where(r => !string.IsNullOrWhiteSpace(r.FromFqn) && !string.IsNullOrWhiteSpace(r.ToFqn)).ToList();
+
+        var skippedSymbols = symbols.Count - validSymbols.Count;
+        var skippedRels = parseResult.Relationships.Count - validRelationships.Count;
+        if (skippedSymbols > 0)
+            logger.LogWarning("Skipped {Count} symbols with empty FQN", skippedSymbols);
+        if (skippedRels > 0)
+            logger.LogWarning("Skipped {Count} relationships with empty FQN", skippedRels);
+
+        logger.LogInformation("Writing to graph store: {Nodes} nodes, {Edges} edges...",
+            validSymbols.Count, validRelationships.Count);
+        await graphStore.UpsertNodesAsync(validSymbols, ct);
+        await graphStore.UpsertEdgesAsync(validRelationships, ct);
+
+        logger.LogInformation("Writing to vector + FTS store...");
+        await vectorStore.UpsertAsync(validSymbols, embeddings, ct);
+
+        // Update file hashes + last indexed
+        await UpdateFileHashesAsync(path, repo.Id, ct);
+        await repositoryStore.UpdateLastIndexedAsync(repo.Id, ct);
+
+        sw.Stop();
+        return new IndexingStats(sw.Elapsed, parseResult.FilesProcessed, validSymbols.Count, validRelationships.Count, csharpSkipped);
+    }
+
+    /// <summary>
+    /// Returns null if no hashes exist (first index), empty list if nothing changed, or list of changed file paths.
+    /// </summary>
+    private async Task<IReadOnlyList<string>?> GetChangedFilesAsync(string path, Guid repoId, CancellationToken ct)
+    {
+        var extensions = new[] { "*.cs", "*.ts", "*.tsx", "*.js", "*.jsx", "*.py", "*.md" };
+        var csFiles = extensions
+            .SelectMany(ext => Directory.GetFiles(path, ext, SearchOption.AllDirectories))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}__pycache__{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}.venv{Path.DirectorySeparatorChar}"))
+            .ToList();
+
+        var changed = new List<string>();
+        var hasAnyHash = false;
+
+        foreach (var file in csFiles)
+        {
+            var hash = ComputeFileHash(file);
+            var isChanged = await repositoryStore.IsFileChangedAsync(file, repoId, hash, ct);
+
+            if (!isChanged)
+            {
+                hasAnyHash = true; // At least one file has a stored hash
+                continue;
+            }
+
+            changed.Add(file);
+        }
+
+        // If no file has any stored hash, this is first index
+        if (!hasAnyHash && changed.Count == csFiles.Count)
+            return null;
+
+        return changed;
+    }
+
+    private async Task UpdateFileHashesAsync(string path, Guid repoId, CancellationToken ct)
+    {
+        var allExts = new[] { "*.cs", "*.ts", "*.tsx", "*.js", "*.jsx", "*.py", "*.md" };
+        var allFiles = allExts
+            .SelectMany(ext => Directory.GetFiles(path, ext, SearchOption.AllDirectories))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}__pycache__{Path.DirectorySeparatorChar}"));
+
+        foreach (var file in allFiles)
+        {
+            var hash = ComputeFileHash(file);
+            await repositoryStore.UpdateFileHashAsync(file, repoId, hash, ct);
+        }
+    }
+
+    private static string ComputeFileHash(string filePath)
+    {
+        var bytes = System.IO.File.ReadAllBytes(filePath);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash);
+    }
+
+    private Task<Dictionary<string, float[]>> GenerateEmbeddingsAsync(
+        IReadOnlyList<CodeSymbol> symbols, CancellationToken ct) =>
+        EmbeddingBatchHelper.GenerateEmbeddingsAsync(
+            symbols,
+            embeddingService,
+            secretsScanner,
+            logger,
+            _embeddingOptions.MaxParallelBatches ?? 1,
+            ct);
+
+    private async Task<List<CodeSymbol>> GenerateSummariesAsync(List<CodeSymbol> symbols, CancellationToken ct)
+    {
+        var methods = symbols
+            .Where(s => s is MethodInfo && s.AiSummary is null)
+            .ToList();
+
+        if (methods.Count == 0) return symbols;
+
+        logger.LogInformation("Generating AI summaries for {Count} methods...", methods.Count);
+
+        var items = methods.Select(s =>
+        {
+            var sig = s is MethodInfo m ? m.Signature : s.Name;
+            return (Signature: sig, Documentation: s.Documentation);
+        }).ToList();
+
+        var summaries = await summaryGenerator.SummarizeBatchAsync(items, ct);
+
+        var result = new List<CodeSymbol>(symbols.Count);
+        var summaryIndex = 0;
+        var generated = 0;
+
+        foreach (var symbol in symbols)
+        {
+            if (symbol is MethodInfo m && m.AiSummary is null)
+            {
+                var summary = summaries[summaryIndex++];
+                result.Add(summary is not null ? m with { AiSummary = summary } : m);
+                if (summary is not null) generated++;
+            }
+            else
+            {
+                result.Add(symbol);
+            }
+        }
+
+        logger.LogInformation("Generated {Count} AI summaries.", generated);
+        return result;
+    }
+
+    private static CodeSymbol SetRepoId(CodeSymbol symbol, Guid repoId) => symbol switch
+    {
+        ClassInfo c => c with { RepoId = repoId },
+        MethodInfo m => m with { RepoId = repoId },
+        InterfaceInfo i => i with { RepoId = repoId },
+        PropertyInfo p => p with { RepoId = repoId },
+        ConstructorInfo c => c with { RepoId = repoId },
+        NamespaceInfo n => n with { RepoId = repoId },
+        DbContextInfo d => d with { RepoId = repoId },
+        DiRegistrationInfo d => d with { RepoId = repoId },
+        ApiEndpointInfo a => a with { RepoId = repoId },
+        DocumentSection d => d with { RepoId = repoId },
+        _ => symbol
+    };
+
+    /// <summary>
+    /// Find all .sln/.slnx files in the repo. If none found, find all .csproj files.
+    /// Solutions are preferred because they contain all projects in the solution.
+    /// Each .sln is parsed once (Roslyn opens all projects inside it).
+    /// </summary>
+    internal static IReadOnlyList<string> FindAllSolutionsAndProjects(string path)
+    {
+        if (path.EndsWith(".sln") || path.EndsWith(".slnx") || path.EndsWith(".csproj"))
+            return File.Exists(path) ? [path] : [];
+
+        if (!Directory.Exists(path)) return [];
+
+        // Prefer .sln files — each .sln includes all its projects
+        var solutions = Directory.GetFiles(path, "*.sln", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(path, "*.slnx", SearchOption.AllDirectories))
+            .Where(f => !IsExcludedPath(f))
+            .ToList();
+
+        if (solutions.Count > 0)
+            return solutions;
+
+        // No solutions — find individual .csproj files
+        return Directory.GetFiles(path, "*.csproj", SearchOption.AllDirectories)
+            .Where(f => !IsExcludedPath(f))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Run dotnet restore on solutions/projects so Roslyn can resolve all symbols.
+    /// Without restore, MSBuildWorkspace produces compilation errors and call graph edges are lost.
+    /// </summary>
+    private async Task RestoreNuGetAsync(IReadOnlyList<string> solutionPaths, CancellationToken ct)
+    {
+        foreach (var solutionPath in solutionPaths)
+        {
+            // Skip if obj directory already has project.assets.json (already restored)
+            var dir = Path.GetDirectoryName(solutionPath)!;
+            if (solutionPath.EndsWith(".csproj"))
+            {
+                var assetsFile = Path.Combine(dir, "obj", "project.assets.json");
+                if (File.Exists(assetsFile)) continue;
+            }
+            else
+            {
+                // For solutions, check if any project has been restored
+                var anyRestored = Directory.GetFiles(dir, "project.assets.json", SearchOption.AllDirectories)
+                    .Any(f => !IsExcludedPath(f));
+                if (anyRestored) continue;
+            }
+
+            logger.LogInformation("Restoring NuGet packages for: {Path}", solutionPath);
+            try
+            {
+                // Find dotnet CLI — may not exist in slim Docker images (aspnet-chiseled)
+                var dotnetPath = FindDotnetSdk();
+                if (dotnetPath is null)
+                {
+                    logger.LogDebug("dotnet SDK not found, skipping NuGet restore (Roslyn will use bundled MSBuild)");
+                    return;
+                }
+
+                using var process = new System.Diagnostics.Process();
+                process.StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = dotnetPath,
+                    Arguments = $"restore \"{solutionPath}\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                process.Start();
+                await process.WaitForExitAsync(ct);
+
+                if (process.ExitCode != 0)
+                {
+                    var stderr = await process.StandardError.ReadToEndAsync(ct);
+                    logger.LogWarning("NuGet restore failed (exit {Code}): {Error}", process.ExitCode, stderr);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "NuGet restore failed for {Path}, Roslyn may report compilation errors", solutionPath);
+            }
+        }
+    }
+
+    private static bool HasDotnetSdk() => FindDotnetSdk() is not null;
+
+    private static string? FindDotnetSdk()
+    {
+        try
+        {
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = "--list-sdks",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            process.Start();
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(5000);
+            // If any SDK is listed, dotnet CLI is usable
+            return !string.IsNullOrWhiteSpace(output) ? "dotnet" : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    internal static bool IsExcludedPath(string path)
+    {
+        var sep = Path.DirectorySeparatorChar;
+        return path.Contains($"{sep}bin{sep}") || path.Contains($"{sep}obj{sep}")
+            || path.Contains($"{sep}node_modules{sep}");
+    }
+
+    /// <summary>
+    /// Smart project name detection. Priority:
+    /// 1. .sln/.slnx file name (C# solution)
+    /// 2. package.json "name" field (Node.js)
+    /// 3. pyproject.toml [project] name (Python)
+    /// 4. Single .csproj RootNamespace or project file name
+    /// 5. Git remote origin repo name
+    /// 6. Fallback: folder name
+    /// </summary>
+    public static string DetectProjectName(string path)
+    {
+        path = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (!Directory.Exists(path))
+            return Path.GetFileName(path) ?? "unknown";
+
+        // 1. .sln / .slnx → best for C# projects
+        var sln = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.GetFiles(path, "*.slnx", SearchOption.TopDirectoryOnly))
+            .FirstOrDefault();
+        if (sln is not null)
+            return Path.GetFileNameWithoutExtension(sln);
+
+        // 2. package.json → Node.js / TypeScript
+        var packageJson = Path.Combine(path, "package.json");
+        if (File.Exists(packageJson))
+        {
+            try
+            {
+                var json = File.ReadAllText(packageJson);
+                var nameMatch = System.Text.RegularExpressions.Regex.Match(json, "\"name\"\\s*:\\s*\"([^\"]+)\"");
+                if (nameMatch.Success)
+                {
+                    var name = nameMatch.Groups[1].Value;
+                    // Strip org scope: "@org/my-app" → "my-app"
+                    if (name.Contains('/'))
+                        name = name[(name.LastIndexOf('/') + 1)..];
+                    if (!string.IsNullOrWhiteSpace(name))
+                        return name;
+                }
+            }
+            catch { /* ignore parse errors */ }
+        }
+
+        // 3. pyproject.toml → Python
+        var pyproject = Path.Combine(path, "pyproject.toml");
+        if (File.Exists(pyproject))
+        {
+            try
+            {
+                var toml = File.ReadAllText(pyproject);
+                var nameMatch = System.Text.RegularExpressions.Regex.Match(toml, "name\\s*=\\s*\"([^\"]+)\"");
+                if (nameMatch.Success && !string.IsNullOrWhiteSpace(nameMatch.Groups[1].Value))
+                    return nameMatch.Groups[1].Value;
+            }
+            catch { /* ignore */ }
+        }
+
+        // 4. Single .csproj at root → use project file name
+        var csproj = Directory.GetFiles(path, "*.csproj", SearchOption.TopDirectoryOnly);
+        if (csproj.Length == 1)
+            return Path.GetFileNameWithoutExtension(csproj[0]);
+
+        // 5. Git remote origin → repo name
+        try
+        {
+            var gitConfig = Path.Combine(path, ".git", "config");
+            if (File.Exists(gitConfig))
+            {
+                var config = File.ReadAllText(gitConfig);
+                var urlMatch = System.Text.RegularExpressions.Regex.Match(config, "url\\s*=\\s*.*?([^/]+?)(?:\\.git)?\\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+                if (urlMatch.Success && !string.IsNullOrWhiteSpace(urlMatch.Groups[1].Value))
+                    return urlMatch.Groups[1].Value;
+            }
+        }
+        catch { /* ignore */ }
+
+        // 6. Fallback: folder name
+        return Path.GetFileName(path) ?? "unknown";
+    }
+}
+
+public sealed record IndexingStats(
+    TimeSpan Duration, int FilesProcessed, int SymbolCount, int RelationshipCount,
+    bool CSharpSkipped = false);

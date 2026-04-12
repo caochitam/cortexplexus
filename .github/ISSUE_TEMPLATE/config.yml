@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/DT-Tuan/cortexplexus/security/advisories/new
+    about: Report security vulnerabilities privately via GitHub Security Advisories. Do NOT open a public issue.
+  - name: Question / discussion
+    url: https://github.com/DT-Tuan/cortexplexus/discussions
+    about: Ask a usage question or discuss design ideas in Discussions.

@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CortexPlexus.Agent/CortexPlexus.Agent.csproj" />
+    <Project Path="src/CortexPlexus.App/CortexPlexus.App.csproj" />
+    <Project Path="src/CortexPlexus.Core/CortexPlexus.Core.csproj" />
+    <Project Path="src/CortexPlexus.Embedding/CortexPlexus.Embedding.csproj" />
+    <Project Path="src/CortexPlexus.Graph/CortexPlexus.Graph.csproj" />
+    <Project Path="src/CortexPlexus.Parsing/CortexPlexus.Parsing.csproj" />
+    <Project Path="src/CortexPlexus.Search/CortexPlexus.Search.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CortexPlexus.Core.Tests/CortexPlexus.Core.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Parsing.Tests/CortexPlexus.Parsing.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Search.Tests/CortexPlexus.Search.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Integration.Tests/CortexPlexus.Integration.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Graph.Tests/CortexPlexus.Graph.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Mcp.Tests/CortexPlexus.Mcp.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Api.Tests/CortexPlexus.Api.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Embedding.Tests/CortexPlexus.Embedding.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Agent.Tests/CortexPlexus.Agent.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.App.Tests/CortexPlexus.App.Tests.csproj" />
+  </Folder>
+</Solution>

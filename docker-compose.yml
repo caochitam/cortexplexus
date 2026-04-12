@@ -1,0 +1,49 @@
+# CortexPlexus — 2 containers, nothing more
+# Usage: docker compose up -d
+
+services:
+  postgres:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_DB: cortexplexus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: cortexplexus
+    volumes:
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 5
+
+  cortexplexus:
+    build:
+      context: .
+      dockerfile: src/CortexPlexus.App/Dockerfile
+    environment:
+      - ConnectionStrings__Default=Host=postgres;Database=cortexplexus;Username=postgres;Password=cortexplexus
+      - Embedding__Provider=${EMBEDDING_PROVIDER:-ollama}
+      - Embedding__ApiKey=${GEMINI_API_KEY:-}
+      - Embedding__OllamaBaseUrl=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - Workspace__Path=/workspace
+    volumes:
+      - ${WORKSPACE_PATH:-.}:/workspace
+      - ${EXTRA_MOUNT:-/opt/test-projects}:/opt/test-projects
+      - appdata:/app/data
+    ports:
+      - "8080:8080"
+    # extra_hosts: cần cho LXC/standard Docker (không phải Docker Desktop) để
+    # `host.docker.internal` resolve về host gateway. Without this, embedding
+    # service fails với "Name or service not known" — observed on LXC server R12+.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  appdata:

@@ -1,0 +1,88 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore + build (Release)
+        run: dotnet build src/CortexPlexus.App/CortexPlexus.App.csproj -c Release
+
+      - name: Run unit test suites (no infrastructure)
+        run: |
+          set -e
+          for proj in \
+            tests/CortexPlexus.Core.Tests \
+            tests/CortexPlexus.Parsing.Tests \
+            tests/CortexPlexus.Search.Tests \
+            tests/CortexPlexus.Embedding.Tests \
+            tests/CortexPlexus.App.Tests \
+            tests/CortexPlexus.Mcp.Tests \
+            tests/CortexPlexus.Agent.Tests \
+            tests/CortexPlexus.Api.Tests
+          do
+            echo "::group::$proj"
+            dotnet test "$proj" -c Release --no-build --logger "trx;LogFileName=test-results.trx"
+            echo "::endgroup::"
+          done
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: tests/**/test-results.trx
+
+  integration-tests:
+    name: Integration tests (Apache AGE + pgvector)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore + build (Release)
+        run: dotnet build src/CortexPlexus.App/CortexPlexus.App.csproj -c Release
+
+      - name: Run integration tests
+        # Testcontainers manages the apache/age + pgvector containers via Docker.
+        # GitHub-hosted ubuntu-latest runners have Docker preinstalled.
+        run: |
+          set -e
+          for proj in \
+            tests/CortexPlexus.Graph.Tests \
+            tests/CortexPlexus.Integration.Tests
+          do
+            echo "::group::$proj"
+            dotnet test "$proj" -c Release --no-build --logger "trx;LogFileName=test-results.trx"
+            echo "::endgroup::"
+          done
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: tests/**/test-results.trx

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Ship Microsoft.Build at runtime — Docker image uses aspnet (no full SDK) -->
+    <DisableMSBuildAssemblyCopyCheck>true</DisableMSBuildAssemblyCopyCheck>
+  </PropertyGroup>
+</Project>

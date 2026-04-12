@@ -1,0 +1,471 @@
+using CortexPlexus.Core.Models;
+
+namespace CortexPlexus.Parsing.TreeSitter;
+
+/// <summary>
+/// Walks a tree-sitter AST to extract symbols and relationships for
+/// TypeScript, JavaScript, and TSX source files.
+/// </summary>
+internal sealed class TypeScriptExtractor
+{
+    private readonly string _sourceCode;
+    private readonly string _filePath;
+    private readonly string _relativePath;
+
+    private readonly List<CodeSymbol> _symbols = [];
+    private readonly List<Relationship> _relationships = [];
+    private readonly HashSet<string> _exportedNames = [];
+    private readonly HashSet<string> _testMethodFqns = [];
+    private readonly bool _isTestFile;
+
+    public TypeScriptExtractor(string sourceCode, string filePath, string relativePath)
+    {
+        _sourceCode = sourceCode;
+        _filePath = filePath;
+        _relativePath = relativePath;
+        _isTestFile = _filePath.Contains(".test.") || _filePath.Contains(".spec.");
+    }
+
+    /// <summary>
+    /// Extracts all symbols and relationships from the given AST root node.
+    /// </summary>
+    public (List<CodeSymbol> Symbols, List<Relationship> Relationships) Extract(global::TreeSitter.Node root)
+    {
+        CollectExports(root);
+        var fileNamespace = _relativePath;
+        WalkNode(root, containingTypeFqn: null, fileNamespace: fileNamespace);
+        return (_symbols, _relationships);
+    }
+
+    private void CollectExports(global::TreeSitter.Node node)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.Type == "export_statement")
+            {
+                foreach (var inner in child.Children)
+                {
+                    var nameNode = inner.GetChildForField("name");
+                    if (nameNode is not null && nameNode.IsNamed)
+                    {
+                        _exportedNames.Add(NodeText(nameNode));
+                    }
+                }
+            }
+        }
+    }
+
+    private void WalkNode(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        switch (node.Type)
+        {
+            case "class_declaration":
+                ExtractClass(node, containingTypeFqn, fileNamespace);
+                return;
+
+            case "interface_declaration":
+                ExtractInterface(node, containingTypeFqn, fileNamespace);
+                return;
+
+            case "type_alias_declaration":
+                ExtractTypeAlias(node, fileNamespace);
+                break;
+
+            case "enum_declaration":
+                ExtractEnum(node, fileNamespace);
+                break;
+
+            case "function_declaration":
+                ExtractFunction(node, containingTypeFqn, fileNamespace);
+                break;
+
+            case "method_definition":
+                ExtractMethod(node, containingTypeFqn, fileNamespace);
+                break;
+
+            case "lexical_declaration" or "variable_declaration":
+                ExtractVariableArrowFunctions(node, containingTypeFqn, fileNamespace);
+                break;
+
+            case "import_statement":
+                ExtractImport(node, fileNamespace);
+                break;
+
+            case "call_expression":
+                ExtractCall(node, containingTypeFqn, fileNamespace);
+                break;
+
+            case "export_statement":
+                WalkChildren(node, containingTypeFqn, fileNamespace);
+                return;
+        }
+
+        if (node.Type is not ("class_declaration" or "interface_declaration"))
+        {
+            WalkChildren(node, containingTypeFqn, fileNamespace);
+        }
+    }
+
+    private void WalkChildren(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        foreach (var child in node.Children)
+        {
+            WalkNode(child, containingTypeFqn, fileNamespace);
+        }
+    }
+
+    private void ExtractClass(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        var name = GetNameText(node);
+        if (name is null) return;
+
+        var fqn = BuildFqn(name);
+
+        _symbols.Add(new ClassInfo
+        {
+            Fqn = fqn,
+            Name = name,
+            Kind = "class",
+            FilePath = _filePath,
+            StartLine = (int)node.StartPosition.Row + 1,
+            EndLine = (int)node.EndPosition.Row + 1,
+            Accessibility = _exportedNames.Contains(name) ? "export" : null,
+            Documentation = DocCommentHelper.GetPrecedingDocComment(node),
+        });
+
+        _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+        ExtractClassHeritage(node, fqn);
+
+        var body = FindChildByType(node, "class_body");
+        if (body is not null)
+        {
+            WalkChildren(body, containingTypeFqn: fqn, fileNamespace);
+        }
+    }
+
+    private void ExtractClassHeritage(global::TreeSitter.Node node, string classFqn)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.Type == "class_heritage")
+            {
+                foreach (var clause in child.Children)
+                {
+                    if (clause.Type == "extends_clause")
+                    {
+                        var valueNode = clause.GetChildForField("value");
+                        if (valueNode is not null)
+                        {
+                            _relationships.Add(new Relationship(classFqn, NodeText(valueNode), RelationshipType.Inherits));
+                        }
+                    }
+                    else if (clause.Type == "implements_clause")
+                    {
+                        foreach (var typeNode in clause.Children)
+                        {
+                            if (typeNode.IsNamed && typeNode.Type != "implements")
+                            {
+                                _relationships.Add(new Relationship(classFqn, NodeText(typeNode), RelationshipType.Implements));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void ExtractInterface(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        var name = GetNameText(node);
+        if (name is null) return;
+
+        var fqn = BuildFqn(name);
+        var memberFqns = new List<string>();
+
+        var body = FindChildByType(node, "interface_body") ?? FindChildByType(node, "object_type");
+        if (body is not null)
+        {
+            foreach (var member in body.Children)
+            {
+                if (member.Type is "method_signature" or "property_signature")
+                {
+                    var memberName = GetNameText(member);
+                    if (memberName is not null)
+                    {
+                        memberFqns.Add($"{fqn}.{memberName}");
+                    }
+                }
+            }
+        }
+
+        _symbols.Add(new InterfaceInfo
+        {
+            Fqn = fqn,
+            Name = name,
+            Kind = "interface",
+            FilePath = _filePath,
+            StartLine = (int)node.StartPosition.Row + 1,
+            EndLine = (int)node.EndPosition.Row + 1,
+            Accessibility = _exportedNames.Contains(name) ? "export" : null,
+            MemberFqns = memberFqns,
+            Documentation = DocCommentHelper.GetPrecedingDocComment(node),
+        });
+
+        _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+
+        if (body is not null)
+        {
+            WalkChildren(body, containingTypeFqn: fqn, fileNamespace);
+        }
+    }
+
+    private void ExtractTypeAlias(global::TreeSitter.Node node, string fileNamespace)
+    {
+        var name = GetNameText(node);
+        if (name is null) return;
+
+        var fqn = BuildFqn(name);
+        _symbols.Add(new ClassInfo
+        {
+            Fqn = fqn,
+            Name = name,
+            Kind = "type",
+            FilePath = _filePath,
+            StartLine = (int)node.StartPosition.Row + 1,
+            EndLine = (int)node.EndPosition.Row + 1,
+            Accessibility = _exportedNames.Contains(name) ? "export" : null,
+        });
+        _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+    }
+
+    private void ExtractEnum(global::TreeSitter.Node node, string fileNamespace)
+    {
+        var name = GetNameText(node);
+        if (name is null) return;
+
+        var fqn = BuildFqn(name);
+        _symbols.Add(new ClassInfo
+        {
+            Fqn = fqn,
+            Name = name,
+            Kind = "enum",
+            FilePath = _filePath,
+            StartLine = (int)node.StartPosition.Row + 1,
+            EndLine = (int)node.EndPosition.Row + 1,
+            Accessibility = _exportedNames.Contains(name) ? "export" : null,
+        });
+        _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+    }
+
+    private void ExtractFunction(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        var name = GetNameText(node);
+        if (name is null) return;
+
+        var fqn = containingTypeFqn is not null ? $"{containingTypeFqn}.{name}" : BuildFqn(name);
+        var isAsync = HasChildWithType(node, "async");
+
+        var isTest = _isTestFile;
+
+        _symbols.Add(new MethodInfo
+        {
+            Fqn = fqn,
+            Name = name,
+            Kind = "function",
+            FilePath = _filePath,
+            StartLine = (int)node.StartPosition.Row + 1,
+            EndLine = (int)node.EndPosition.Row + 1,
+            Signature = BuildSignature(name, node),
+            IsAsync = isAsync,
+            IsTestMethod = isTest,
+            ContainingTypeFqn = containingTypeFqn,
+            Accessibility = _exportedNames.Contains(name) ? "export" : null,
+            Documentation = DocCommentHelper.GetPrecedingDocComment(node),
+        });
+
+        if (isTest) _testMethodFqns.Add(fqn);
+
+        if (containingTypeFqn is not null)
+            _relationships.Add(new Relationship(containingTypeFqn, fqn, RelationshipType.HasMethod));
+        else
+            _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+
+        var body = node.GetChildForField("body");
+        if (body is not null)
+        {
+            _relationships.AddRange(ConfigAccessDetector.DetectTypeScript(body, fqn));
+            _relationships.AddRange(HttpCallDetector.DetectTypeScript(body, fqn));
+            _relationships.AddRange(EventPatternDetector.DetectTypeScript(body, fqn));
+            WalkChildren(body, containingTypeFqn, fileNamespace);
+        }
+    }
+
+    private void ExtractMethod(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        var name = GetNameText(node);
+        if (name is null) return;
+
+        var fqn = containingTypeFqn is not null ? $"{containingTypeFqn}.{name}" : BuildFqn(name);
+        var isAsync = HasChildWithType(node, "async");
+
+        var isTest = _isTestFile;
+
+        _symbols.Add(new MethodInfo
+        {
+            Fqn = fqn,
+            Name = name,
+            Kind = "method",
+            FilePath = _filePath,
+            StartLine = (int)node.StartPosition.Row + 1,
+            EndLine = (int)node.EndPosition.Row + 1,
+            Signature = BuildSignature(name, node),
+            IsAsync = isAsync,
+            IsTestMethod = isTest,
+            ContainingTypeFqn = containingTypeFqn,
+            Documentation = DocCommentHelper.GetPrecedingDocComment(node),
+        });
+
+        if (isTest) _testMethodFqns.Add(fqn);
+
+        if (containingTypeFqn is not null)
+            _relationships.Add(new Relationship(containingTypeFqn, fqn, RelationshipType.HasMethod));
+        else
+            _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+
+        var body = node.GetChildForField("body");
+        if (body is not null)
+        {
+            _relationships.AddRange(ConfigAccessDetector.DetectTypeScript(body, fqn));
+            _relationships.AddRange(HttpCallDetector.DetectTypeScript(body, fqn));
+            _relationships.AddRange(EventPatternDetector.DetectTypeScript(body, fqn));
+            WalkChildren(body, containingTypeFqn, fileNamespace);
+        }
+    }
+
+    private void ExtractVariableArrowFunctions(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.Type != "variable_declarator") continue;
+
+            var nameNode = child.GetChildForField("name");
+            var valueNode = child.GetChildForField("value");
+            if (nameNode is null || valueNode is null) continue;
+            if (valueNode.Type != "arrow_function") continue;
+
+            var name = NodeText(nameNode);
+            var fqn = containingTypeFqn is not null ? $"{containingTypeFqn}.{name}" : BuildFqn(name);
+            var isAsync = HasChildWithType(valueNode, "async");
+
+            var isTest = _isTestFile;
+
+            _symbols.Add(new MethodInfo
+            {
+                Fqn = fqn,
+                Name = name,
+                Kind = "function",
+                FilePath = _filePath,
+                StartLine = (int)child.StartPosition.Row + 1,
+                EndLine = (int)child.EndPosition.Row + 1,
+                Signature = $"{name}()",
+                IsAsync = isAsync,
+                IsTestMethod = isTest,
+                ContainingTypeFqn = containingTypeFqn,
+                Accessibility = _exportedNames.Contains(name) ? "export" : null,
+                Documentation = DocCommentHelper.GetPrecedingDocComment(node),
+            });
+
+            if (isTest) _testMethodFqns.Add(fqn);
+
+            if (containingTypeFqn is not null)
+                _relationships.Add(new Relationship(containingTypeFqn, fqn, RelationshipType.HasMethod));
+            else
+                _relationships.Add(new Relationship(fileNamespace, fqn, RelationshipType.Declares));
+
+            var body = valueNode.GetChildForField("body");
+            if (body is not null)
+            {
+                _relationships.AddRange(ConfigAccessDetector.DetectTypeScript(body, fqn));
+            _relationships.AddRange(HttpCallDetector.DetectTypeScript(body, fqn));
+            _relationships.AddRange(EventPatternDetector.DetectTypeScript(body, fqn));
+                WalkChildren(body, containingTypeFqn, fileNamespace);
+            }
+        }
+    }
+
+    private void ExtractImport(global::TreeSitter.Node node, string fileNamespace)
+    {
+        var sourceNode = node.GetChildForField("source");
+        if (sourceNode is null) return;
+
+        var raw = NodeText(sourceNode);
+        var importPath = raw.Trim('\'', '"', '`');
+
+        _relationships.Add(new Relationship(
+            fileNamespace,
+            importPath,
+            RelationshipType.DependsOn,
+            new Dictionary<string, string> { ["importPath"] = importPath }));
+    }
+
+    private void ExtractCall(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
+    {
+        var functionNode = node.GetChildForField("function");
+        if (functionNode is null) return;
+
+        var calleeName = functionNode.Type switch
+        {
+            "identifier" or "member_expression" => NodeText(functionNode),
+            _ => null,
+        };
+
+        if (calleeName is null) return;
+
+        var callerFqn = containingTypeFqn ?? fileNamespace;
+        var relType = _testMethodFqns.Contains(callerFqn) ? RelationshipType.TestCovers : RelationshipType.Calls;
+        _relationships.Add(new Relationship(callerFqn, calleeName, relType));
+    }
+
+    // --- Helpers ---
+
+    private string BuildFqn(string symbolName) => $"{_relativePath}:{symbolName}";
+
+    private string? GetNameText(global::TreeSitter.Node node)
+    {
+        var nameNode = node.GetChildForField("name");
+        return nameNode is not null && nameNode.IsNamed ? NodeText(nameNode) : null;
+    }
+
+    private static string NodeText(global::TreeSitter.Node node)
+    {
+        return node.Text ?? string.Empty;
+    }
+
+    private static global::TreeSitter.Node? FindChildByType(global::TreeSitter.Node node, string type)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.Type == type) return child;
+        }
+        return null;
+    }
+
+    private static bool HasChildWithType(global::TreeSitter.Node node, string type)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.Type == type) return true;
+        }
+        return false;
+    }
+
+    private string BuildSignature(string name, global::TreeSitter.Node node)
+    {
+        var paramsNode = node.GetChildForField("parameters");
+        if (paramsNode is not null)
+        {
+            return $"{name}{NodeText(paramsNode)}";
+        }
+        return $"{name}()";
+    }
+}

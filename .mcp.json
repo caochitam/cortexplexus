@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cortexplexus": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}

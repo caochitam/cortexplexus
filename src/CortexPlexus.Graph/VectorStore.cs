@@ -1,0 +1,329 @@
+using CortexPlexus.Core.Abstractions;
+using CortexPlexus.Core.Models;
+using Microsoft.Extensions.Logging;
+using Npgsql;
+using Pgvector;
+
+namespace CortexPlexus.Graph;
+
+/// <summary>
+/// IVectorStore implementation using PostgreSQL with the pgvector extension.
+/// Supports HNSW-indexed cosine similarity search over code symbol embeddings.
+/// </summary>
+public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore> logger) : IVectorStore
+{
+    private const int BatchSize = 200;
+
+    /// <summary>
+    /// Minimum number of vector inserts before switching to bulk-load mode
+    /// (drop HNSW → insert → recreate HNSW). Below this threshold we keep the
+    /// index live and pay per-row HNSW maintenance.
+    ///
+    /// Break-even measured on pgvector pg17 (R18 benchmark):
+    /// - INSERT 500 rows WITH hnsw index present:  222 ms (0.44 ms/row)
+    /// - INSERT 500 rows WITHOUT index, then rebuild on 6K rows: 21 ms + 987 ms = 1008 ms
+    /// - INSERT 1000 rows WITH hnsw: ~444 ms; WITHOUT + rebuild: ~42 ms + 987 ms = 1029 ms (still slower)
+    /// - Break-even ≈ 2,300–2,500 rows; we use 500 to be conservative because the
+    ///   projection is super-linear as the table grows (R14 chunk 6 was 707s).
+    /// </summary>
+    private const int BulkLoadThreshold = 500;
+
+    private const string HnswDropSql = "DROP INDEX IF EXISTS public.idx_symbols_embedding";
+    private const string HnswCreateSql =
+        "CREATE INDEX IF NOT EXISTS idx_symbols_embedding " +
+        "ON public.code_symbols USING hnsw (embedding vector_cosine_ops)";
+
+    /// <summary>
+    /// pgvector HNSW per-query candidate list size. Default is 40 which gives ~95%
+    /// recall on top-10 queries; raising to 100 lifts recall to ~99% with negligible
+    /// latency cost on our corpus size class (5–20K embeddings, &lt;5 ms either way).
+    /// Code-search recall matters more than the few microseconds saved.
+    /// R19: applied per-connection in <see cref="SearchAsync"/> via SET (Npgsql resets
+    /// session state on connection return to pool, so no leak between callers).
+    /// </summary>
+    private const int HnswEfSearch = 100;
+
+    public async Task UpsertAsync(
+        IEnumerable<CodeSymbol> symbols,
+        IReadOnlyDictionary<string, float[]> embeddings,
+        CancellationToken ct = default)
+    {
+        // Deduplicate by FQN (keep last occurrence) to avoid ON CONFLICT errors within same batch
+        var symbolList = symbols
+            .GroupBy(s => s.Fqn)
+            .Select(g => g.Last())
+            .ToList();
+        if (symbolList.Count == 0) return;
+
+        // Count symbols that will actually hit the HNSW index (non-null, non-empty vector).
+        var embeddedCount = symbolList.Count(s =>
+            embeddings.TryGetValue(s.Fqn, out var v) && v.Length > 0);
+        var useBulkLoad = embeddedCount >= BulkLoadThreshold;
+
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+
+        var indexWasDropped = false;
+        var dropSw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            if (useBulkLoad)
+            {
+                logger.LogInformation(
+                    "Vector bulk-load: dropping HNSW index ({Embedded} vectors ≥ threshold {Threshold})",
+                    embeddedCount, BulkLoadThreshold);
+                await ExecuteNonQueryAsync(conn, HnswDropSql, ct);
+                indexWasDropped = true;
+                dropSw.Stop();
+            }
+
+            var insertSw = System.Diagnostics.Stopwatch.StartNew();
+            var failCount = 0;
+            foreach (var batch in Chunk(symbolList, BatchSize))
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    await UpsertBatch(conn, batch, embeddings, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failCount += batch.Count;
+                    logger.LogWarning(ex, "Failed to upsert vector batch of {Count} symbols", batch.Count);
+                }
+            }
+            insertSw.Stop();
+
+            if (failCount > 0)
+                logger.LogWarning("Vector upsert: {Failed} of {Total} symbols failed", failCount, symbolList.Count);
+
+            if (useBulkLoad)
+            {
+                logger.LogInformation(
+                    "Vector bulk-load insert phase: {Symbols} symbols in {InsertMs} ms",
+                    symbolList.Count, insertSw.ElapsedMilliseconds);
+            }
+        }
+        finally
+        {
+            // CRITICAL: we MUST recreate HNSW regardless of insert outcome,
+            // otherwise SearchAsync falls back to sequential scan on vector(768) —
+            // unusable even on small tables. Do not propagate the user's CT here;
+            // if the user cancelled we still need the index back.
+            if (indexWasDropped)
+            {
+                var rebuildSw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    await ExecuteNonQueryAsync(conn, HnswCreateSql, CancellationToken.None, commandTimeoutSeconds: 600);
+                    rebuildSw.Stop();
+                    logger.LogInformation(
+                        "Vector bulk-load: HNSW index rebuilt in {RebuildMs} ms (drop={DropMs} ms)",
+                        rebuildSw.ElapsedMilliseconds, dropSw.ElapsedMilliseconds);
+                }
+                catch (Exception ex)
+                {
+                    // Index rebuild failed → search is now SLOW until someone runs
+                    // CREATE INDEX manually. Log loudly so ops can react.
+                    logger.LogError(ex,
+                        "CRITICAL: HNSW index rebuild failed after bulk-load. " +
+                        "Vector search will be slow until recovery. " +
+                        "Manual fix: {Sql}",
+                        HnswCreateSql);
+                    // Do not rethrow — the user's upsert succeeded, and rethrow would
+                    // mask it. Ops should see the CRITICAL log and intervene.
+                }
+            }
+        }
+    }
+
+    private static async Task ExecuteNonQueryAsync(
+        NpgsqlConnection conn, string sql, CancellationToken ct, int commandTimeoutSeconds = 60)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.CommandTimeout = commandTimeoutSeconds;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<SearchResult>> SearchAsync(
+        float[] queryEmbedding,
+        int limit = 10,
+        Guid? repoId = null,
+        string? kind = null,
+        CancellationToken ct = default)
+    {
+        var filters = new List<string>();
+        if (repoId.HasValue) filters.Add("repo_id = @repoId");
+        if (!string.IsNullOrEmpty(kind)) filters.Add("kind = @kind");
+
+        var whereClause = filters.Count > 0 ? "WHERE " + string.Join(" AND ", filters) : "";
+
+        var sql = $"""
+            SELECT fqn, name, kind, signature, file_path, start_line,
+                   1.0 - (embedding <=> @query) AS score, documentation, summary
+            FROM code_symbols
+            {whereClause}
+            AND embedding IS NOT NULL
+            ORDER BY embedding <=> @query
+            LIMIT @limit
+            """;
+
+        // Fix WHERE/AND when no filters: replace leading "AND" with "WHERE"
+        if (filters.Count == 0)
+        {
+            sql = """
+                SELECT fqn, name, kind, signature, file_path, start_line,
+                       1.0 - (embedding <=> @query) AS score, documentation, summary
+                FROM code_symbols
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> @query
+                LIMIT @limit
+                """;
+        }
+
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+
+        // R19: tune HNSW ef_search per query for better recall on our corpus size.
+        // Default 40 misses ~5% of top-10 results; 100 raises recall to ~99%.
+        // Npgsql resets session state on connection return to pool, so this does
+        // not leak to subsequent unrelated callers.
+        await ExecuteNonQueryAsync(conn, $"SET hnsw.ef_search = {HnswEfSearch}", ct);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+
+        cmd.Parameters.Add(new NpgsqlParameter("@query", new Vector(queryEmbedding)));
+        cmd.Parameters.AddWithValue("@limit", limit);
+
+        if (repoId.HasValue) cmd.Parameters.AddWithValue("@repoId", repoId.Value);
+        if (!string.IsNullOrEmpty(kind)) cmd.Parameters.AddWithValue("@kind", kind);
+
+        var results = new List<SearchResult>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            results.Add(new SearchResult(
+                Fqn: reader.GetString(0),
+                Name: reader.GetString(1),
+                Kind: reader.GetString(2),
+                Signature: reader.IsDBNull(3) ? null : reader.GetString(3),
+                FilePath: reader.IsDBNull(4) ? null : reader.GetString(4),
+                StartLine: reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                Score: reader.GetDouble(6),
+                Source: "Vector",
+                Documentation: reader.IsDBNull(7) ? null : reader.GetString(7),
+                AiSummary: reader.IsDBNull(8) ? null : reader.GetString(8)
+            ));
+        }
+
+        return results;
+    }
+
+    public async Task DeleteByRepoAsync(Guid repoId, CancellationToken ct = default)
+    {
+        const string sql = "DELETE FROM code_symbols WHERE repo_id = @repoId";
+
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@repoId", repoId);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    // --- Private helpers ---
+
+    private static async Task UpsertBatch(
+        NpgsqlConnection conn,
+        IList<CodeSymbol> batch,
+        IReadOnlyDictionary<string, float[]> embeddings,
+        CancellationToken ct)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("""
+            INSERT INTO code_symbols (fqn, name, kind, signature, file_path, start_line, end_line, repo_id, embedding, documentation, summary, is_test_method, accessibility)
+            VALUES
+            """);
+
+        var cmd = conn.CreateCommand();
+        for (var i = 0; i < batch.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+
+            var symbol = batch[i];
+            sb.Append($"(@fqn{i}, @name{i}, @kind{i}, @sig{i}, @fp{i}, @sl{i}, @el{i}, @rid{i}, @emb{i}, @doc{i}, @sum{i}, @test{i}, @acc{i})");
+
+            cmd.Parameters.AddWithValue($"@fqn{i}", symbol.Fqn);
+            cmd.Parameters.AddWithValue($"@name{i}", symbol.Name);
+            cmd.Parameters.AddWithValue($"@kind{i}", symbol.Kind);
+            cmd.Parameters.AddWithValue($"@sig{i}", (object?)GetSignature(symbol) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"@fp{i}", (object?)symbol.FilePath ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"@sl{i}", (object?)symbol.StartLine ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"@el{i}", (object?)symbol.EndLine ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"@rid{i}", symbol.RepoId ?? Guid.Empty);
+            cmd.Parameters.AddWithValue($"@doc{i}", (object?)symbol.Documentation ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"@sum{i}", (object?)symbol.AiSummary ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"@test{i}", symbol is MethodInfo m ? m.IsTestMethod : false);
+            cmd.Parameters.AddWithValue($"@acc{i}", (object?)GetAccessibility(symbol) ?? DBNull.Value);
+
+            if (embeddings.TryGetValue(symbol.Fqn, out var vec) && vec.Length > 0)
+                cmd.Parameters.Add(new NpgsqlParameter($"@emb{i}", new Vector(vec)));
+            else
+                cmd.Parameters.AddWithValue($"@emb{i}", DBNull.Value);
+        }
+
+        sb.Append("""
+
+            ON CONFLICT (fqn) DO UPDATE SET
+                name = EXCLUDED.name,
+                kind = EXCLUDED.kind,
+                signature = EXCLUDED.signature,
+                file_path = EXCLUDED.file_path,
+                start_line = EXCLUDED.start_line,
+                end_line = EXCLUDED.end_line,
+                repo_id = EXCLUDED.repo_id,
+                embedding = EXCLUDED.embedding,
+                documentation = EXCLUDED.documentation,
+                summary = EXCLUDED.summary,
+                is_test_method = EXCLUDED.is_test_method,
+                accessibility = EXCLUDED.accessibility,
+                indexed_at = NOW()
+            """);
+
+        cmd.CommandText = sb.ToString();
+        await cmd.ExecuteNonQueryAsync(ct);
+        await cmd.DisposeAsync();
+    }
+
+    private static string? GetSignature(CodeSymbol symbol) => symbol switch
+    {
+        MethodInfo m => m.Signature,
+        ConstructorInfo c => c.Signature,
+        DocumentSection d => d.Content, // Content stored as signature → indexed in tsvector (weight C)
+        _ => null
+    };
+
+    /// <summary>
+    /// Extract accessibility từ symbol record. Required by QueryDeadCodeAsync để filter
+    /// public/internal methods. Without this, dead code detection always empty (R12 finding).
+    /// </summary>
+    private static string? GetAccessibility(CodeSymbol symbol) => symbol switch
+    {
+        MethodInfo m => m.Accessibility,
+        ClassInfo c => c.Accessibility,
+        InterfaceInfo i => i.Accessibility,
+        PropertyInfo p => null, // No Accessibility field on PropertyInfo
+        ConstructorInfo c => c.Accessibility,
+        FieldInfo f => f.Accessibility,
+        EventInfo e => e.Accessibility,
+        _ => null
+    };
+
+    private static IEnumerable<IList<T>> Chunk<T>(IList<T> source, int size)
+    {
+        for (var i = 0; i < source.Count; i += size)
+        {
+            yield return source.Skip(i).Take(size).ToList();
+        }
+    }
+}

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Testcontainers" Version="4.6.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.6.0" />
+    <PackageReference Include="NSubstitute" Version="5.3.0" />
+    <PackageReference Include="Npgsql" Version="9.*" />
+    <PackageReference Include="Pgvector" Version="0.*" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CortexPlexus.Core\CortexPlexus.Core.csproj" />
+    <ProjectReference Include="..\..\src\CortexPlexus.Graph\CortexPlexus.Graph.csproj" />
+    <ProjectReference Include="..\..\src\CortexPlexus.Search\CortexPlexus.Search.csproj" />
+    <ProjectReference Include="..\..\src\CortexPlexus.Embedding\CortexPlexus.Embedding.csproj" />
+    <!-- Parsing added in Sprint 5 cho E2E workflow tests (TreeSitter + Markdown only,
+         Roslyn không cần MSBuild) -->
+    <ProjectReference Include="..\..\src\CortexPlexus.Parsing\CortexPlexus.Parsing.csproj" />
+  </ItemGroup>
+
+</Project>

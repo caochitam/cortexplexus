@@ -1,0 +1,91 @@
+name: Bug report
+description: Report a bug in CortexPlexus
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill out as much as you can — it helps us reproduce and fix the issue faster.
+
+        Before submitting, please check that:
+        - The issue is reproducible on the latest commit on `main`.
+        - You have searched [existing issues](../../../issues?q=is%3Aissue) for duplicates.
+        - You are not reporting a security vulnerability — those should go through [SECURITY.md](../../../blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: CortexPlexus version
+      description: Output of `git rev-parse HEAD` or release tag
+      placeholder: "e.g. v0.5.0 or 46fc609"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running CortexPlexus?
+      options:
+        - Docker Compose (default)
+        - Native .NET (no Docker)
+        - Other (describe in additional context)
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: AI client
+      description: Which IDE / MCP client triggered the bug?
+      placeholder: "e.g. Claude Code 1.x, Cursor, VS Code Copilot, direct curl"
+
+  - type: input
+    id: tool
+    attributes:
+      label: MCP tool involved
+      description: If the bug is in an MCP tool, which one?
+      placeholder: "e.g. get_callers, search_code, explore_topic"
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that someone else can follow
+      placeholder: |
+        1. `docker compose up -d`
+        2. Index project X with `index_from_local("/workspace/X")`
+        3. Call `get_callers(methodFqn: "Y")`
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What did you see instead? Include error messages, full output, screenshots if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: |
+        Paste the relevant slice of `docker logs cortexplexus-app --tail 100` (or equivalent for native runs).
+        Redact any secrets / paths you don't want public.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might be relevant — host OS, .NET version, repository size, etc.

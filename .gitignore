@@ -1,0 +1,59 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.vs/
+*.DotSettings.user
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+appsettings.Development.json
+
+# Logs
+logs/
+*.log
+
+# Docker
+pgdata/
+appdata/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Build artifacts
+publish/
+artifacts/
+
+# Personal / dev-only — not for upstream
+.claude/                  # Claude Code personal settings + skills
+deploy.sh                 # Personal deploy script
+[Report]*.txt             # User smoke-test reports
+*.local.md                # Personal notes
+bench_*.sql               # Local benchmark scripts
+
+# Internal specification + planning docs (not public)
+SPEC.md
+PROJECT-SPEC.md
+About_Grapuco.md
+claude-code-project-blueprint.md
+project-specification-template.md
+docs/SPEC.md
+docs/OVERVIEW.md
+docs/ADVANCED-RAG-TECHNIQUES.md
+docs/TEST-PLAN.md
+docs/BENCHMARK.md
+docs/VALIDATION-*.md
+docs/specs/
+
+# Editor/IDE personal config
+.vscode/settings.json
+.idea/
+.git-backup/
