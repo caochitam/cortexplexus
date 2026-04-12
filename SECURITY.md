@@ -12,7 +12,7 @@ Instead, report privately via one of:
 
 1. **GitHub Security Advisories** — recommended.
    Open a draft advisory at the [Security tab](../../security/advisories/new) of this repository.
-2. **Email** — contact the maintainers (see [`CODEOWNERS`](.github/CODEOWNERS) once published).
+2. **Email** — contact the maintainer via [GitHub profile](https://github.com/DT-Tuan).
 
 When reporting, please include:
 - A description of the vulnerability and the impact
