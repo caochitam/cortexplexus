@@ -4,9 +4,10 @@
 
 Pull, `docker compose up`, connect your IDE, done. **100% free and self-hosted.**
 
+[![Build & Test](https://github.com/DT-Tuan/cortexplexus/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/DT-Tuan/cortexplexus/actions/workflows/build-and-test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)](https://dotnet.microsoft.com/)
-[![Tests](https://img.shields.io/badge/tests-693%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-693%20passing-brightgreen)](docs/TESTING.md)
 [![MCP](https://img.shields.io/badge/MCP-26%20tools-blue)](https://modelcontextprotocol.io/)
 
 ---
