@@ -28,13 +28,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore + build (Release)
-        run: dotnet build src/CortexPlexus.App/CortexPlexus.App.csproj -c Release
-
-      - name: Run unit test suites (no infrastructure)
+      - name: Run unit test suites
         run: |
           set -e
-          mkdir -p test-results
           for proj in \
             tests/CortexPlexus.Core.Tests \
             tests/CortexPlexus.Parsing.Tests \
@@ -47,9 +43,9 @@ jobs:
           do
             name=$(basename "$proj")
             echo "::group::$proj"
-            dotnet test "$proj" -c Release --no-build \
-              --results-directory ${{ github.workspace }}/test-results \
-              --logger "trx;LogFileName=${name}.trx"
+            dotnet test "$proj" -c Release \
+              --logger "trx;LogFileName=$name.trx" \
+              --logger "console;verbosity=minimal"
             echo "::endgroup::"
           done
 
@@ -57,16 +53,9 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
-          files: test-results/*.trx
+          files: '**/TestResults/*.trx'
           check_name: 'Unit Test Results'
           comment_mode: off
-
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: test-results/*.trx
 
   integration-tests:
     name: Integration tests (Apache AGE + pgvector)
@@ -88,16 +77,15 @@ jobs:
         # GitHub-hosted ubuntu-latest runners have Docker preinstalled.
         run: |
           set -e
-          mkdir -p test-results
           for proj in \
             tests/CortexPlexus.Graph.Tests \
             tests/CortexPlexus.Integration.Tests
           do
             name=$(basename "$proj")
             echo "::group::$proj"
-            dotnet test "$proj" -c Release --no-build \
-              --results-directory ${{ github.workspace }}/test-results \
-              --logger "trx;LogFileName=${name}.trx"
+            dotnet test "$proj" -c Release \
+              --logger "trx;LogFileName=$name.trx" \
+              --logger "console;verbosity=minimal"
             echo "::endgroup::"
           done
 
@@ -105,13 +93,6 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
-          files: test-results/*.trx
+          files: '**/TestResults/*.trx'
           check_name: 'Integration Test Results'
           comment_mode: off
-
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-results
-          path: test-results/*.trx
