@@ -31,7 +31,7 @@ Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDU
 2. Make focused commits with clear messages. Conventional Commits style is welcome but not required.
 3. Add tests for any new behavior. We have **693 tests** across 10 projects; new code without tests is unlikely to be accepted.
 4. Run the full test suite locally before pushing (see "Running tests" below).
-5. Update [`docs/BENCHMARK.md`](docs/BENCHMARK.md) if your change affects performance characteristics.
+5. Update [`docs/TESTING.md`](docs/TESTING.md) if your change affects performance characteristics.
 6. Open a PR using the **Pull Request** template. Link the issue it closes.
 
 ## Development setup
@@ -150,7 +150,7 @@ The Tree-sitter pipeline lives in `src/CortexPlexus.Parsing/TreeSitter/`. To add
 - **Runbooks** (deployment, dev setup, troubleshooting) live in [`docs/runbooks/`](docs/runbooks/).
 - **Decision records** live in [`docs/decisions/`](docs/decisions/).
 
-When you fix a non-trivial bug, consider adding a "Round NN" section to [`docs/BENCHMARK.md`](docs/BENCHMARK.md) with root cause + verification notes.
+When you fix a non-trivial bug, consider adding a "Round NN" section to [`docs/TESTING.md`](docs/TESTING.md) with root cause + verification notes.
 
 ## License
 
