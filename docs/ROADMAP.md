@@ -73,8 +73,8 @@ See git history for details. Key milestones:
 | 8.11 | SDK detection: skip Roslyn when no SDK, actionable AI guidance | ✅ | TS/JS/Py still work on slim image |
 | 8.12 | Smart repo naming: detect from .sln/package.json/pyproject.toml/git | ✅ | No more "workspace" as name |
 | 8.13 | Security: relative paths, platform allowlist, content truncation | ✅ | OWASP-based audit |
-| 8.14 | Deploy script: local build → save → SCP → load | ✅ | `deploy.sh`, build cache 0B on LXC |
-| 8.15 | Skills: security-audit, updated deploy/test-runner/index-project | ✅ | 5 Claude Code skills |
+| 8.14 | Docker image publish via GitHub Actions CI/CD | ✅ | `ghcr.io/dt-tuan/cortexplexus` |
+| 8.15 | GitHub Actions: build-and-test, docker-publish, release | ✅ | CI on every push/PR |
 
 ### Architecture Changes
 
