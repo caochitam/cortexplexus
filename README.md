@@ -117,6 +117,9 @@ IndexFromGit(url: "https://github.com/org/repo.git", name: "myrepo")
 
 After creating the file, **restart your IDE session** — no client hot-reloads MCP config.
 
+> **Full MCP guide with all 26 tools, usage examples, and troubleshooting:**
+> **[`docs/MCP-GUIDE.md`](docs/MCP-GUIDE.md)** — read this after connecting your IDE.
+
 ---
 
 ## Features
