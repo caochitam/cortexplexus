@@ -1,11 +1,16 @@
 # CortexPlexus — 2 containers, nothing more
 # Usage: docker compose up -d
+#
+# Images are pre-built and published to GitHub Container Registry.
+# No source code or build tools needed — just this file + .env.
 
 services:
   postgres:
-    build:
-      context: ./docker/postgres
-      dockerfile: Dockerfile
+    image: ghcr.io/dt-tuan/cortexplexus-postgres:latest
+    # To build from source instead: comment out 'image' and uncomment 'build':
+    # build:
+    #   context: ./docker/postgres
+    #   dockerfile: Dockerfile
     environment:
       POSTGRES_DB: cortexplexus
       POSTGRES_USER: postgres
@@ -20,9 +25,11 @@ services:
       retries: 5
 
   cortexplexus:
-    build:
-      context: .
-      dockerfile: src/CortexPlexus.App/Dockerfile
+    image: ghcr.io/dt-tuan/cortexplexus:latest
+    # To build from source instead: comment out 'image' and uncomment 'build':
+    # build:
+    #   context: .
+    #   dockerfile: src/CortexPlexus.App/Dockerfile
     environment:
       - ConnectionStrings__Default=Host=postgres;Database=cortexplexus;Username=postgres;Password=cortexplexus
       - Embedding__Provider=${EMBEDDING_PROVIDER:-ollama}
@@ -31,13 +38,9 @@ services:
       - Workspace__Path=/workspace
     volumes:
       - ${WORKSPACE_PATH:-.}:/workspace
-      - ${EXTRA_MOUNT:-/opt/test-projects}:/opt/test-projects
       - appdata:/app/data
     ports:
       - "8080:8080"
-    # extra_hosts: cần cho LXC/standard Docker (không phải Docker Desktop) để
-    # `host.docker.internal` resolve về host gateway. Without this, embedding
-    # service fails với "Name or service not known" — observed on LXC server R12+.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
