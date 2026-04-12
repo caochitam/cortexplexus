@@ -57,3 +57,5 @@ docs/specs/
 .vscode/settings.json
 .idea/
 .git-backup/
+CLAUDE.md
+src/*/CLAUDE.md
