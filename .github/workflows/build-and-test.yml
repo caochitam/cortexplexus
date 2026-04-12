@@ -48,7 +48,7 @@ jobs:
             name=$(basename "$proj")
             echo "::group::$proj"
             dotnet test "$proj" -c Release --no-build \
-              --results-directory test-results \
+              --results-directory ${{ github.workspace }}/test-results \
               --logger "trx;LogFileName=${name}.trx"
             echo "::endgroup::"
           done
@@ -96,7 +96,7 @@ jobs:
             name=$(basename "$proj")
             echo "::group::$proj"
             dotnet test "$proj" -c Release --no-build \
-              --results-directory test-results \
+              --results-directory ${{ github.workspace }}/test-results \
               --logger "trx;LogFileName=${name}.trx"
             echo "::endgroup::"
           done
