@@ -82,16 +82,11 @@ If you're hacking on CortexPlexus, you're the rare case where the IDE *and* the 
 
 - **Never commit `.mcp.json`** — it's git-ignored. Edit freely; your URL/headers stay local.
 - **Never commit `.claude/`, `.vscode/mcp.json`, `.cursor/`** — also git-ignored.
-- **Prefer `--scope user` over `--scope project`** when using the CLI:
-  ```bash
-  # GOOD — writes to ~/.claude.json, never touches the repo
-  claude mcp add --scope user --transport http cortexplexus http://<server>:8080/mcp
-
-  # BAD — writes to the tracked file (if you haven't renamed it) and can leak on commit
-  claude mcp add --scope project --transport http cortexplexus http://<server>:8080/mcp
-  ```
-  `--scope local` is also safe (per-project, per-user, not tracked), but `user` is simplest when you only run one CortexPlexus instance.
-- **Running IDE on a different host than the server?** Change `localhost` in your copy of `.mcp.json` to the server IP or hostname. The example stays `localhost` so fresh clones work out-of-the-box.
+- **Config precedence (important):** if a project-level `.mcp.json` exists in the repo, it **wins over** user scope. So if you already ran `cp .mcp.json.example .mcp.json` during Quick Start, a subsequent `claude mcp add --scope user` will be silently shadowed. Two clean options:
+  - **Simplest:** just edit the local `.mcp.json` (it's gitignored, won't leak).
+  - **Or:** delete `.mcp.json` and use `claude mcp add --scope user --transport http cortexplexus http://<server>:8080/mcp` — writes to `~/.claude.json`, never touches the repo.
+- **Avoid `--scope project` CLI.** It writes to the tracked `.mcp.json.example` (or re-creates `.mcp.json`) in ways that are easy to commit by accident. Stick to editing the gitignored `.mcp.json` by hand, or `--scope user`.
+- **Running IDE on a different host than the server?** Change `localhost` in your `.mcp.json` to the server IP or hostname. The `.mcp.json.example` stays `localhost` so fresh clones work out-of-the-box.
 
 ---
 

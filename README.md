@@ -46,6 +46,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/mcp
 # 5. Connect your IDE (see below)
 ```
 
+> **Running server and IDE on different machines?** Replace `localhost` with the server hostname or IP (e.g. `http://192.168.1.10:8080/mcp`) in every command above and in the IDE config below.
+
 ### Index your first project
 
 You have three options:
