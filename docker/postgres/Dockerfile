@@ -1,8 +1,9 @@
-FROM apache/age:PG17_latest
-# Pinned to Postgres 17. Do NOT use `apache/age:latest`: upstream rolls it to
-# newer PG majors without warning (last rolled to PG18 which shipped binaries
+FROM apache/age:release_PG17_1.6.0
+# Pinned to AGE 1.6 on Postgres 17. Do NOT use `apache/age:latest`: upstream
+# rolls it to newer PG majors without warning (rolled to PG18 with binaries
 # using CPU instructions not present on older Xeon/Core hosts — see issue #1
-# follow-up). Bumping major version is a deliberate, tested upgrade.
+# follow-up, SIGILL on Kaby Lake i3-7100 with no AVX-512). Bumping the major
+# version should be a deliberate, tested upgrade, not silent drift from :latest.
 
 # Install pgvector extension on top of AGE image
 RUN apt-get update && \
