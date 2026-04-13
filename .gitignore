@@ -16,11 +16,15 @@ obj/
 .env
 appsettings.Development.json
 
+# MCP / IDE connection configs (per-developer — copy from *.example)
+.mcp.json
+.cursor/
+
 # Logs
 logs/
 *.log
 
-# Docker
+# Docker volumes
 pgdata/
 appdata/
 
@@ -33,18 +37,14 @@ publish/
 artifacts/
 
 # Personal / dev-only — not for upstream
-.claude/                  # Claude Code personal settings + skills
-deploy.sh                 # Personal deploy script
-[Report]*.txt             # User smoke-test reports
-*.local.md                # Personal notes
-bench_*.sql               # Local benchmark scripts
+# (gitignore does NOT support inline comments — keep comments on their own lines)
+.claude/
+.git-backup/
+deploy.sh
 
 # Internal specification + planning docs (not public)
 SPEC.md
 PROJECT-SPEC.md
-About_Grapuco.md
-claude-code-project-blueprint.md
-project-specification-template.md
 docs/SPEC.md
 docs/OVERVIEW.md
 docs/ADVANCED-RAG-TECHNIQUES.md
@@ -52,10 +52,3 @@ docs/TEST-PLAN.md
 docs/BENCHMARK.md
 docs/VALIDATION-*.md
 docs/specs/
-
-# Editor/IDE personal config
-.vscode/settings.json
-.idea/
-.git-backup/
-CLAUDE.md
-src/*/CLAUDE.md

@@ -68,7 +68,11 @@ IndexFromGit(url: "https://github.com/org/repo.git", name: "myrepo")
 
 ### Connect your IDE
 
-**Claude Code** — `.mcp.json` at project root:
+**Claude Code** — copy the template, then edit the URL if your server is not on `localhost`:
+```bash
+cp .mcp.json.example .mcp.json
+```
+`.mcp.json.example` contents (already points to `localhost:8080` — change the host if your CortexPlexus server runs elsewhere):
 ```json
 {
   "mcpServers": {
@@ -79,6 +83,7 @@ IndexFromGit(url: "https://github.com/org/repo.git", name: "myrepo")
   }
 }
 ```
+> `.mcp.json` is git-ignored so your local URL/auth tweaks won't leak into the repo. If you're hacking on CortexPlexus itself, see [docs/MCP-GUIDE.md](docs/MCP-GUIDE.md#developing-on-cortexplexus-itself).
 
 **Cursor** — `.cursor/mcp.json`:
 ```json

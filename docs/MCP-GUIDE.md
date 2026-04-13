@@ -28,12 +28,18 @@ CortexPlexus MCP is **not** pre-installed. Create the config file for your clien
 
 | Client | File | Location |
 |--------|------|----------|
-| **Claude Code** | `.mcp.json` | Project root |
+| **Claude Code** | `.mcp.json` | Project root (copy from `.mcp.json.example`) |
 | **Cursor** | `.cursor/mcp.json` | Project root |
 | **VS Code** | `.vscode/mcp.json` | Project root |
 | **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | Home dir |
 
-**Claude Code** — `.mcp.json`:
+All four config files above are **git-ignored** — your personal URL/auth never hits the repo.
+
+**Claude Code** — copy the template and edit the URL if needed:
+```bash
+cp .mcp.json.example .mcp.json    # then open it and change host if not localhost
+```
+Template contents:
 ```json
 {
   "mcpServers": {
@@ -69,6 +75,23 @@ CortexPlexus MCP is **not** pre-installed. Create the config file for your clien
 ```
 
 **After creating the file: restart your IDE session.** No client hot-reloads MCP config.
+
+### Developing on CortexPlexus itself
+
+If you're hacking on CortexPlexus, you're the rare case where the IDE *and* the MCP server point at the same repo. A few rules to keep personal config out of the public repo:
+
+- **Never commit `.mcp.json`** — it's git-ignored. Edit freely; your URL/headers stay local.
+- **Never commit `.claude/`, `.vscode/mcp.json`, `.cursor/`** — also git-ignored.
+- **Prefer `--scope user` over `--scope project`** when using the CLI:
+  ```bash
+  # GOOD — writes to ~/.claude.json, never touches the repo
+  claude mcp add --scope user --transport http cortexplexus http://<server>:8080/mcp
+
+  # BAD — writes to the tracked file (if you haven't renamed it) and can leak on commit
+  claude mcp add --scope project --transport http cortexplexus http://<server>:8080/mcp
+  ```
+  `--scope local` is also safe (per-project, per-user, not tracked), but `user` is simplest when you only run one CortexPlexus instance.
+- **Running IDE on a different host than the server?** Change `localhost` in your copy of `.mcp.json` to the server IP or hostname. The example stays `localhost` so fresh clones work out-of-the-box.
 
 ---
 
