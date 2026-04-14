@@ -112,6 +112,18 @@ cp .mcp.json.example .mcp.json
 }
 ```
 
+**Google Antigravity** — `~/.gemini/antigravity/mcp_config.json` (Windows: `C:\Users\<USERNAME>\.gemini\antigravity\mcp_config.json`). Antigravity uses `serverUrl`, **not** `url` — do not copy the Claude Code / Cursor schema here:
+```json
+{
+  "mcpServers": {
+    "cortexplexus": {
+      "serverUrl": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+You can also open this file from inside Antigravity: Agent panel `...` → **MCP Servers** → **Manage MCP Servers** → **View raw config**. Close and reopen Antigravity after editing — it does not hot-reload.
+
 **Windsurf / stdio-only clients** — bridge with [mcp-remote](https://www.npmjs.com/package/mcp-remote):
 ```json
 {
