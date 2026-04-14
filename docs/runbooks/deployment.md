@@ -72,3 +72,4 @@ docker compose logs postgres -f        # Database logs
 | Permission denied on workspace | Đảm bảo Docker có quyền đọc thư mục |
 | `postgres failed to start` / `No space left on device` | See [`maintenance.md`](maintenance.md) — disk cleanup |
 | Stack has been running for weeks, disk fills up | Weekly prune cron — see [`maintenance.md`](maintenance.md) §2 |
+| Agent dies after reboot / logout — have to re-activate | Wire auto-start — see [`agent-auto-start.md`](agent-auto-start.md) (systemd / Task Scheduler / LaunchAgent) |

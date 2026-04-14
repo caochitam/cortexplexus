@@ -1,3 +1,4 @@
+using CortexPlexus.Parsing;
 using Microsoft.Extensions.Logging;
 
 namespace CortexPlexus.Agent;
@@ -20,10 +21,20 @@ public sealed class ProjectFileWatcher : IDisposable
     private readonly object _lock = new();
     private readonly TimeSpan _debounceDelay = TimeSpan.FromSeconds(3);
     private CancellationTokenSource? _debounceCts;
+    private readonly string _rootPath;
+    private readonly IReadOnlyList<string> _ignorePatterns;
 
     public ProjectFileWatcher(string path, ILogger logger)
     {
         _logger = logger;
+        _rootPath = Path.GetFullPath(path);
+        _ignorePatterns = IgnorePatternMatcher.LoadFromDirectory(_rootPath);
+        if (_ignorePatterns.Count > 0)
+        {
+            _logger.LogInformation(
+                "Watch mode honors .cortexplexusignore: {Count} user pattern(s) loaded from {Root}",
+                _ignorePatterns.Count, _rootPath);
+        }
         _watcher = new FileSystemWatcher(path)
         {
             IncludeSubdirectories = true,
@@ -64,19 +75,53 @@ public sealed class ProjectFileWatcher : IDisposable
 
     private void OnFileChanged(object sender, FileSystemEventArgs e)
     {
-        if (!IsWatchedFile(e.FullPath)) return;
+        if (!ShouldWatch(e.FullPath)) return;
         QueueChange(e.FullPath);
     }
 
     private void OnFileRenamed(object sender, RenamedEventArgs e)
     {
-        if (IsWatchedFile(e.FullPath)) QueueChange(e.FullPath);
-        if (IsWatchedFile(e.OldFullPath)) QueueChange(e.OldFullPath);
+        if (ShouldWatch(e.FullPath)) QueueChange(e.FullPath);
+        if (ShouldWatch(e.OldFullPath)) QueueChange(e.OldFullPath);
+    }
+
+    // Instance filter: hardcoded defaults + user's .cortexplexusignore.
+    // Static IsWatchedFile retained for unit tests that cover the default list.
+    private bool ShouldWatch(string filePath)
+    {
+        if (!IsWatchedFile(filePath)) return false;
+        if (_ignorePatterns.Count > 0 && IgnorePatternMatcher.Matches(filePath, _rootPath, _ignorePatterns))
+            return false;
+        return true;
     }
 
     private void OnError(object sender, ErrorEventArgs e)
     {
-        _logger.LogWarning(e.GetException(), "FileSystemWatcher error");
+        // Typical trigger: OS kernel event buffer overflow (~64 KB default).
+        // Happens during git checkout / renames / mass refactor — any of the
+        // rapid-event burst the ~64 KB buffer cannot absorb. Without recovery
+        // we silently miss every change while the buffer was saturated, so
+        // the project quietly drifts out of sync.
+        //
+        // Recovery: enumerate the watched tree ourselves and queue every
+        // eligible file. Debounce coalesces them into a single batch; the
+        // indexer's SHA256 diff skips unchanged files, so the server only
+        // re-ingests what actually moved.
+        _logger.LogWarning(e.GetException(),
+            "FileSystemWatcher error (likely buffer overflow) — triggering full rescan of {Root}",
+            _rootPath);
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(_rootPath, "*", SearchOption.AllDirectories))
+            {
+                if (ShouldWatch(file)) QueueChange(file);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Full-rescan recovery failed — watch is now degraded; restart the agent to reset");
+        }
     }
 
     private void QueueChange(string filePath)

@@ -458,9 +458,28 @@ public sealed class LocalIndexer
 
     internal static string ComputeFileHash(string filePath)
     {
-        var bytes = File.ReadAllBytes(filePath);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash);
+        // Retry on IOException (usually "file in use" / "sharing violation" / "access denied")
+        // that fires transiently while the user's IDE is mid-save. 3 attempts with
+        // 150-300ms backoff is enough to catch ~99% of IDE flush races without
+        // noticeably slowing the batch.
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                var bytes = File.ReadAllBytes(filePath);
+                var hash = SHA256.HashData(bytes);
+                return Convert.ToHexString(hash);
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(150 * attempt);  // 150ms, 300ms
+            }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(150 * attempt);
+            }
+        }
     }
 
     internal static IReadOnlyList<string> FindSolutionsAndProjects(string path)

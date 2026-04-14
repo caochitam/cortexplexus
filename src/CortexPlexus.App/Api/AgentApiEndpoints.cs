@@ -25,13 +25,17 @@ public static class AgentApiEndpoints
 
         api.MapGet("/agent/version", () =>
         {
-            var workspacePath = Environment.GetEnvironmentVariable("Workspace__Path") ?? "/workspace";
-            // Compute SHA256 of each available archive/binary for integrity verification
+            // Compute SHA256 of each available archive/binary for integrity verification.
+            // Resolve order (first hit wins per RID):
+            //   1. /app/_agent — bundled in the Docker image at build time. This is the
+            //      "ships with CortexPlexus" copy; users never have to SCP a tarball.
+            //   2. ${Workspace__Path}/_agent — explicit override. Drop a newer / custom
+            //      tarball here to override the bundled one without rebuilding the image.
             var hashes = new Dictionary<string, string>();
             foreach (var rid in new[] { "win-x64", "linux-x64", "osx-x64" })
             {
-                var archivePath = Path.Combine(workspacePath, "_agent", $"cortexplexus-agent-{rid}.tar.gz");
-                if (File.Exists(archivePath))
+                var archivePath = ResolveAgentArchive(rid);
+                if (archivePath is not null && File.Exists(archivePath))
                 {
                     var bytes = File.ReadAllBytes(archivePath);
                     hashes[rid] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
@@ -54,19 +58,20 @@ public static class AgentApiEndpoints
             if (!allowedPlatforms.Contains(rid))
                 return Results.BadRequest(new { error = $"Invalid platform '{rid}'. Allowed: {string.Join(", ", allowedPlatforms)}" });
 
-            var workspacePath = Environment.GetEnvironmentVariable("Workspace__Path") ?? "/workspace";
-            var agentDir = Path.Combine(workspacePath, "_agent", rid);
-
-            // Try archive first (framework-dependent with all DLLs)
-            var archiveName = $"cortexplexus-agent-{rid}.tar.gz";
-            var archivePath = Path.Combine(workspacePath, "_agent", archiveName);
-            if (File.Exists(archivePath))
+            // Try archive first — image-bundled, then user-override. Serving the
+            // same file either way.
+            var archivePath = ResolveAgentArchive(rid);
+            if (archivePath is not null && File.Exists(archivePath))
             {
+                var archiveName = Path.GetFileName(archivePath);
                 var stream = File.OpenRead(archivePath);
                 return Results.File(stream, "application/gzip", archiveName);
             }
 
-            // Fallback: single binary (self-contained)
+            // Fallback: single binary (self-contained). Only searched under the
+            // user-override location — the image never ships single binaries.
+            var workspacePath = Environment.GetEnvironmentVariable("Workspace__Path") ?? "/workspace";
+            var agentDir = Path.Combine(workspacePath, "_agent", rid);
             var binaryName = rid.StartsWith("win") ? "cortexplexus-agent.exe" : "cortexplexus-agent";
             var binaryPath = Path.Combine(agentDir, binaryName);
             if (File.Exists(binaryPath))
@@ -284,6 +289,20 @@ public static class AgentApiEndpoints
         });
 
         return app;
+    }
+
+    // Image-bundled location (from src/CortexPlexus.App/Dockerfile's agent
+    // publish step) takes precedence; operators can still drop a newer tarball
+    // at ${Workspace__Path}/_agent/ to override without rebuilding the image.
+    private static string? ResolveAgentArchive(string rid)
+    {
+        var archiveName = $"cortexplexus-agent-{rid}.tar.gz";
+        var bundledPath = Path.Combine("/app", "_agent", archiveName);
+        if (File.Exists(bundledPath)) return bundledPath;
+
+        var workspacePath = Environment.GetEnvironmentVariable("Workspace__Path") ?? "/workspace";
+        var workspaceArchivePath = Path.Combine(workspacePath, "_agent", archiveName);
+        return File.Exists(workspaceArchivePath) ? workspaceArchivePath : null;
     }
 
     private static string DetectPlatform()

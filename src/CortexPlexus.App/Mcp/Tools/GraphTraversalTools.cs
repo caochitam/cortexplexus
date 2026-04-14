@@ -414,4 +414,43 @@ public sealed class GraphTraversalTools
         sb.AppendLine("Tip: Use the 'repository' parameter in SearchCode/SemanticSearch/GetDiRegistrations/GetApiEndpoints to scope results to a specific project.");
         return sb.ToString();
     }
+
+    [McpServerTool, Description(
+        "Force a full re-index of a previously indexed repository on the next indexing run. " +
+        "Wipes the server-side file-hash cache for that repo so every file is treated as changed. " +
+        "Does NOT delete symbols in place — fresh upserts overwrite by FQN. " +
+        "Use when: the repo is stuck in PARTIAL / DEGRADED health, incremental indexing missed changes, " +
+        "or you want a clean rebuild after a server-side fix. Run ActivateAgent or index_from_local afterwards.")]
+    public static async Task<string> ForceReindex(
+        [Description("Repository name as shown by ListRepositories. Must match exactly (case-insensitive).")] string name,
+        IRepositoryStore repoStore = default!,
+        NpgsqlDataSource dataSource = default!)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "Error: 'name' is required. Call ListRepositories() to see valid names.";
+
+        var repos = await repoStore.ListAsync();
+        var match = repos.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+            return $"No repository named '{name}'. Call ListRepositories() for valid names.";
+
+        int deletedHashes;
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM file_hashes WHERE repo_id = @repoId";
+            cmd.Parameters.AddWithValue("@repoId", match.Id);
+            deletedHashes = await cmd.ExecuteNonQueryAsync();
+        }
+
+        return $"""
+            Force-reindex armed for '{match.Name}':
+              Hashes cleared: {deletedHashes}
+              Path:           {match.Path}
+              Next step:      call ActivateAgent (for .NET projects) or index_from_local (for server-side
+                              TS/JS/Py/Md) to run the full re-index. Existing symbols are NOT deleted —
+                              they will be overwritten by upsert on matching FQN, and stale entries
+                              whose files no longer exist will remain until a maintenance sweep.
+            """;
+    }
 }
