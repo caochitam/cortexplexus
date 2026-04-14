@@ -283,4 +283,10 @@ void ConfigureServices(IServiceCollection services, string[] args)
     services.AddScoped<IndexingPipeline>();
     services.AddScoped<KnowledgeExporter>();
     services.AddMemoryCache();
+
+    // Needed so MCP tool handlers (e.g. ActivateAgent) can look at the incoming
+    // HTTP request and auto-detect the URL the client used to reach us — avoids
+    // handing back a hard-coded `localhost:8080` to an agent that connected from
+    // a different host.
+    services.AddHttpContextAccessor();
 }
