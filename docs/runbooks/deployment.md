@@ -70,3 +70,5 @@ docker compose logs postgres -f        # Database logs
 | Port 8080 already in use | Change `ports` in docker-compose.yml |
 | Workspace not found | Check `WORKSPACE_PATH` in .env — must be absolute path |
 | Permission denied on workspace | Đảm bảo Docker có quyền đọc thư mục |
+| `postgres failed to start` / `No space left on device` | See [`maintenance.md`](maintenance.md) — disk cleanup |
+| Stack has been running for weeks, disk fills up | Weekly prune cron — see [`maintenance.md`](maintenance.md) §2 |
