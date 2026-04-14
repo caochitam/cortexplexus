@@ -336,7 +336,7 @@ public sealed class GraphTraversalTools
     [McpServerTool, Description("List all indexed repositories with their names, last-indexed timestamp, and persistence health (symbol count + embedding coverage). Check the 'health' line before assuming a repo is queryable — a registered repo with 0 symbols or missing embeddings means the last indexing run did not fully commit.")]
     public static async Task<string> ListRepositories(
         IRepositoryStore repoStore = default!,
-        NpgsqlDataSource dataSource = default!)
+        NpgsqlDataSource? dataSource = null)
     {
         var repos = await repoStore.ListAsync();
         if (repos.Count == 0)
@@ -344,11 +344,14 @@ public sealed class GraphTraversalTools
 
         // DB health check: per-repo symbol count + embedding coverage.
         // Lets the AI agent see "registered but empty" repos (issue #1 symptom)
-        // without needing a separate tool call.
+        // without needing a separate tool call. Skipped when dataSource is null —
+        // happens in unit tests that don't spin up Postgres; real MCP invocation
+        // always gets one via DI.
         var healthByRepo = new Dictionary<Guid, (long Symbols, long WithEmbedding)>();
-        await using (var conn = await dataSource.OpenConnectionAsync())
-        await using (var cmd = conn.CreateCommand())
+        if (dataSource is not null)
         {
+            await using var conn = await dataSource.OpenConnectionAsync();
+            await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 SELECT repo_id, COUNT(*), COUNT(*) FILTER (WHERE embedding IS NOT NULL)
                 FROM code_symbols
@@ -386,7 +389,12 @@ public sealed class GraphTraversalTools
             sb.AppendLine($"  Path: {r.Path}");
             sb.AppendLine($"  Last indexed: {r.LastIndexed?.ToString("yyyy-MM-dd HH:mm:ss") ?? "never"}");
 
-            if (healthByRepo.TryGetValue(r.Id, out var h))
+            if (dataSource is null)
+            {
+                // No DB probe available (e.g. unit test harness). Silently skip
+                // the health line rather than print a misleading "UNKNOWN".
+            }
+            else if (healthByRepo.TryGetValue(r.Id, out var h))
             {
                 var coverage = h.Symbols > 0 ? (double)h.WithEmbedding / h.Symbols : 0;
                 var status = h.Symbols switch
@@ -424,10 +432,12 @@ public sealed class GraphTraversalTools
     public static async Task<string> ForceReindex(
         [Description("Repository name as shown by ListRepositories. Must match exactly (case-insensitive).")] string name,
         IRepositoryStore repoStore = default!,
-        NpgsqlDataSource dataSource = default!)
+        NpgsqlDataSource? dataSource = null)
     {
         if (string.IsNullOrWhiteSpace(name))
             return "Error: 'name' is required. Call ListRepositories() to see valid names.";
+        if (dataSource is null)
+            return "Error: database connection is not available (server misconfigured).";
 
         var repos = await repoStore.ListAsync();
         var match = repos.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
