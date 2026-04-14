@@ -108,7 +108,25 @@ public sealed class AgentTools
             - If hostname/port is actually different, re-invoke `ActivateAgent` with `serverUrl: "http://<right-host>:<port>"`.
             - If the server is down, tell the user — DO NOT fabricate a workaround.
 
-            ## Step 3 — Is an agent already running for any project?
+            ## Step 3 — Version check (skip if no agent installed yet)
+
+            ```bash
+            if [ -f "{{agentDll}}" ]; then
+              INSTALLED=$(dotnet "{{agentDll}}" version 2>/dev/null | grep -oE 'v[0-9.]+' | tr -d 'v' || echo "unknown")
+              LATEST=$(curl -sS {{server}}/api/agent/version | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])' 2>/dev/null || echo "unknown")
+              if [ "$INSTALLED" = "$LATEST" ]; then echo "UP_TO_DATE:$INSTALLED"
+              elif [ "$INSTALLED" = "unknown" ] || [ "$LATEST" = "unknown" ]; then echo "CHECK_FAILED"
+              else echo "UPDATE_AVAILABLE:$INSTALLED -> $LATEST"; fi
+            else
+              echo "NOT_INSTALLED"
+            fi
+            ```
+            - `UP_TO_DATE:X` → skip to Step 5 (no need to re-install).
+            - `UPDATE_AVAILABLE:X -> Y` → proceed to Step 4 to re-install. The user's AI agent should notify the user: "CortexPlexus agent update available: X → Y".
+            - `NOT_INSTALLED` → proceed to Step 4 (first install).
+            - `CHECK_FAILED` → treat as "proceed with caution"; log it but don't block the user. Likely a version-format mismatch; re-install does no harm.
+
+            ## Step 4 — Is an agent already running for any project?
 
             ```bash
             {{runningCheck}}
@@ -116,13 +134,10 @@ public sealed class AgentTools
             **If a process is listed**: an agent is already running. If you know it's for `{{name}}`, jump to Step 6 (Verify). If it's for a different project, leave it alone — CortexPlexus supports multiple concurrent agents per host.
             **If `NOT_RUNNING`**: continue.
 
-            ## Step 4 — Install the agent (skip if already installed)
+            ## Step 5 — Install or upgrade the agent
 
-            ```bash
-            test -f "{{agentDll}}" && echo "INSTALLED" || echo "NOT_INSTALLED"
-            ```
-            If `INSTALLED` → skip to Step 5.
-            If `NOT_INSTALLED`:
+            Run this if Step 3 said `NOT_INSTALLED` or `UPDATE_AVAILABLE:*`.
+            Skip if Step 3 said `UP_TO_DATE:*`.
 
             ```bash
             mkdir -p "{{installDir}}"
@@ -137,7 +152,7 @@ public sealed class AgentTools
             - If 404, tell the user the server build is missing the {{platformTag}} binary and suggest `docker compose pull` on the server.
             - Do NOT proceed.
 
-            ## Step 5 — One-time index, then watch mode
+            ## Step 6 — One-time index, then watch mode
 
             First, do a foreground index so the user (and you) can SEE any errors:
 
@@ -157,7 +172,7 @@ public sealed class AgentTools
             echo "Watch started (PID $!). Logs: /tmp/cortexplexus-agent-{{name}}.log"
             ```
 
-            ## Step 6 — Verify end-to-end
+            ## Step 7 — Verify end-to-end
 
             ```bash
             sleep 2

@@ -1,4 +1,5 @@
 using CortexPlexus.Agent;
+using CortexPlexus.Core;
 
 namespace CortexPlexus.Agent.Tests;
 

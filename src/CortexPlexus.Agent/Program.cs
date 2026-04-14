@@ -1,4 +1,5 @@
 using CortexPlexus.Agent;
+using CortexPlexus.Core;
 using Microsoft.Extensions.Logging;
 
 var loggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));

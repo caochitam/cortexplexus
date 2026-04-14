@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using CortexPlexus.Core;
 using Microsoft.Extensions.Logging;
 
 namespace CortexPlexus.Agent;

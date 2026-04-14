@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using CortexPlexus.App.Api.Dto;
 using CortexPlexus.App.Indexing;
+using CortexPlexus.Core;
 using CortexPlexus.Core.Abstractions;
 using CortexPlexus.Core.Models;
 using CortexPlexus.Embedding;
@@ -12,7 +13,9 @@ namespace CortexPlexus.App.Api;
 
 public static class AgentApiEndpoints
 {
-    private const string AgentVersion = "1.0.0";
+    // Version is a const from CortexPlexus.Core.AgentInfo — single source of
+    // truth shared with the agent CLI. Bump AgentInfo.Version, not this file.
+    private const string AgentVersion = AgentInfo.Version;
 
     public static IEndpointRouteBuilder MapAgentApi(this IEndpointRouteBuilder app)
     {
