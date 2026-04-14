@@ -23,6 +23,8 @@ AI coding assistants (Claude, Cursor, Copilot) read your files as plain text —
 
 **No other open-source tool combines** Roslyn-level C# semantic analysis with multi-language Tree-sitter inside a unified Knowledge Graph.
 
+> **Want the full story?** See [docs/INTRODUCTION.md](docs/INTRODUCTION.md) (English) or [docs/INTRODUCTION-VI.md](docs/INTRODUCTION-VI.md) (Vietnamese) — real benchmark numbers, six concrete use cases, comparison vs Copilot / Cursor / Sourcegraph. For a talk-ready pitch: [docs/PITCH-DECK.md](docs/PITCH-DECK.md).
+
 ---
 
 ## Quick Start
