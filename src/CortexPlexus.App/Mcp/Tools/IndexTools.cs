@@ -2,6 +2,7 @@ using System.ComponentModel;
 using CortexPlexus.App.Indexing;
 using CortexPlexus.Core.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace CortexPlexus.App.Mcp.Tools;
@@ -17,7 +18,11 @@ public sealed class IndexTools
     public static async Task<string> IndexFromLocal(
         [Description("Absolute path to project directory on the server (e.g., /workspace, /opt/projects/MyApp)")] string path,
         IServiceScopeFactory scopeFactory = default!,
-        IRepositoryStore repoStore = default!)
+        IRepositoryStore repoStore = default!,
+        // Auto-bound by the SDK: if the client passed a progressToken, reports are forwarded
+        // as `notifications/progress`; otherwise the instance silently no-ops.
+        IProgress<ProgressNotificationValue> progress = default!,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(path))
             return "Error: path is required.";
@@ -28,7 +33,7 @@ public sealed class IndexTools
         using var scope = scopeFactory.CreateScope();
         var pipeline = scope.ServiceProvider.GetRequiredService<IndexingPipeline>();
 
-        var stats = await pipeline.IndexAsync(path);
+        var stats = await pipeline.IndexAsync(path, ct, progress);
         var detectedName = IndexingPipeline.DetectProjectName(path);
 
         return FormatResult(detectedName, path, stats);
@@ -43,7 +48,9 @@ public sealed class IndexTools
         [Description("Git repository URL (HTTPS). Example: https://github.com/org/repo.git")] string url,
         [Description("Branch to clone (default: main)")] string branch = "main",
         [Description("Optional project name (default: extracted from URL)")] string? name = null,
-        IServiceScopeFactory scopeFactory = default!)
+        IServiceScopeFactory scopeFactory = default!,
+        IProgress<ProgressNotificationValue> progress = default!,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(url))
             return "Error: Git URL is required.";
@@ -98,7 +105,7 @@ public sealed class IndexTools
         // Index
         using var scope = scopeFactory.CreateScope();
         var pipeline = scope.ServiceProvider.GetRequiredService<IndexingPipeline>();
-        var stats = await pipeline.IndexAsync(repoPath);
+        var stats = await pipeline.IndexAsync(repoPath, ct, progress);
 
         return FormatResult(repoName, repoPath, stats, url, branch);
     }

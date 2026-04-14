@@ -5,6 +5,7 @@ using CortexPlexus.Parsing.Markdown;
 using CortexPlexus.Parsing.TreeSitter;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol;
 
 namespace CortexPlexus.App.Indexing;
 
@@ -23,10 +24,26 @@ public sealed class IndexingPipeline(
 {
     private readonly EmbeddingOptions _embeddingOptions = embeddingOptions.Value;
 
-    public async Task<IndexingStats> IndexAsync(string path, CancellationToken ct = default)
+    public async Task<IndexingStats> IndexAsync(
+        string path,
+        CancellationToken ct = default,
+        IProgress<ProgressNotificationValue>? progress = null)
     {
+        // 5 fixed phases: detect → parse → embed → graph → vector.
+        // "embed" is typically 60-80% of wall time (Ollama single-thread, 25-30s/batch),
+        // so each phase tick in the progress bar is coarse — good enough for the user to
+        // know the run isn't hung. Per-batch progress inside embedding is added below.
+        const int totalPhases = 5;
+        void Report(int phase, string message) => progress?.Report(new ProgressNotificationValue
+        {
+            Progress = phase,
+            Total = totalPhases,
+            Message = message
+        });
+
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
+        Report(0, "Detecting project + changed files");
         // Repository = root directory (like a GitHub repo)
         // All sub-projects inside belong to the same repository
         var repoName = DetectProjectName(path);
@@ -49,6 +66,7 @@ public sealed class IndexingPipeline(
         var totalFiles = 0;
         var totalErrors = 0;
 
+        Report(1, "Parsing source files");
         var solutionPaths = FindAllSolutionsAndProjects(path);
 
         // C# parsing requires .NET SDK (Roslyn MSBuildWorkspace)
@@ -139,6 +157,7 @@ public sealed class IndexingPipeline(
             .Where(s => s.Kind is "class" or "method" or "interface" or "struct" or "record" or "function" or "type" or "document" or "section")
             .ToList();
 
+        Report(2, $"Generating embeddings for {embeddable.Count} symbols");
         logger.LogInformation("Generating embeddings for {Count} symbols...", embeddable.Count);
         var embeddings = await GenerateEmbeddingsAsync(embeddable, ct);
 
@@ -166,11 +185,13 @@ public sealed class IndexingPipeline(
         if (skippedRels > 0)
             logger.LogWarning("Skipped {Count} relationships with empty FQN", skippedRels);
 
+        Report(3, $"Upserting graph: {validSymbols.Count} nodes, {validRelationships.Count} edges");
         logger.LogInformation("Writing to graph store: {Nodes} nodes, {Edges} edges...",
             validSymbols.Count, validRelationships.Count);
         await graphStore.UpsertNodesAsync(validSymbols, ct);
         await graphStore.UpsertEdgesAsync(validRelationships, ct);
 
+        Report(4, $"Upserting vectors: {embeddings.Count} embeddings");
         logger.LogInformation("Writing to vector + FTS store...");
         await vectorStore.UpsertAsync(validSymbols, embeddings, ct);
 
@@ -178,6 +199,7 @@ public sealed class IndexingPipeline(
         await UpdateFileHashesAsync(path, repo.Id, ct);
         await repositoryStore.UpdateLastIndexedAsync(repo.Id, ct);
 
+        Report(5, $"Indexed {parseResult.FilesProcessed} files, {validSymbols.Count} symbols");
         sw.Stop();
         return new IndexingStats(sw.Elapsed, parseResult.FilesProcessed, validSymbols.Count, validRelationships.Count, csharpSkipped);
     }
