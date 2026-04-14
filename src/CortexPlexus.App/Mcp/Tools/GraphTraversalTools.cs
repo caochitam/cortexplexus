@@ -3,6 +3,7 @@ using CortexPlexus.Core.Abstractions;
 using CortexPlexus.Core.Models;
 using CortexPlexus.Search;
 using ModelContextProtocol.Server;
+using Npgsql;
 
 namespace CortexPlexus.App.Mcp.Tools;
 
@@ -332,13 +333,33 @@ public sealed class GraphTraversalTools
         return sb.ToString();
     }
 
-    [McpServerTool, Description("List all indexed repositories with their names. Use the repository name in other tools to scope searches to a specific project.")]
+    [McpServerTool, Description("List all indexed repositories with their names, last-indexed timestamp, and persistence health (symbol count + embedding coverage). Check the 'health' line before assuming a repo is queryable — a registered repo with 0 symbols or missing embeddings means the last indexing run did not fully commit.")]
     public static async Task<string> ListRepositories(
-        IRepositoryStore repoStore = default!)
+        IRepositoryStore repoStore = default!,
+        NpgsqlDataSource dataSource = default!)
     {
         var repos = await repoStore.ListAsync();
         if (repos.Count == 0)
             return "No repositories indexed yet.";
+
+        // DB health check: per-repo symbol count + embedding coverage.
+        // Lets the AI agent see "registered but empty" repos (issue #1 symptom)
+        // without needing a separate tool call.
+        var healthByRepo = new Dictionary<Guid, (long Symbols, long WithEmbedding)>();
+        await using (var conn = await dataSource.OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT repo_id, COUNT(*), COUNT(*) FILTER (WHERE embedding IS NOT NULL)
+                FROM code_symbols
+                GROUP BY repo_id
+                """;
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                healthByRepo[reader.GetGuid(0)] = (reader.GetInt64(1), reader.GetInt64(2));
+            }
+        }
 
         // R21 Fix #1: when the same project has been indexed multiple times (e.g.
         // once via /workspace server path, once via agent at _agent/<name>), we end
@@ -364,6 +385,24 @@ public sealed class GraphTraversalTools
             sb.AppendLine($"  Name: {r.Name}");
             sb.AppendLine($"  Path: {r.Path}");
             sb.AppendLine($"  Last indexed: {r.LastIndexed?.ToString("yyyy-MM-dd HH:mm:ss") ?? "never"}");
+
+            if (healthByRepo.TryGetValue(r.Id, out var h))
+            {
+                var coverage = h.Symbols > 0 ? (double)h.WithEmbedding / h.Symbols : 0;
+                var status = h.Symbols switch
+                {
+                    0 => "EMPTY — registered but no symbols persisted. Re-run indexing.",
+                    _ when h.WithEmbedding == 0 => "DEGRADED — symbols present but no embeddings. Semantic search will fail; check server logs for vector-upsert warnings.",
+                    _ when coverage < 0.9 => $"PARTIAL — {h.WithEmbedding}/{h.Symbols} ({coverage:P0}) symbols embedded. Some semantic hits will be missing.",
+                    _ => $"OK — {h.Symbols} symbols, {h.WithEmbedding} with embeddings ({coverage:P0})"
+                };
+                sb.AppendLine($"  Health: {status}");
+            }
+            else
+            {
+                sb.AppendLine("  Health: UNKNOWN — no rows in code_symbols for this repo.");
+            }
+
             if (g.Stale.Count > 0)
             {
                 var stalePaths = string.Join(", ", g.Stale.Select(s => s.Path));

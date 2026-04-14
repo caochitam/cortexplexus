@@ -43,7 +43,7 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
     /// </summary>
     private const int HnswEfSearch = 100;
 
-    public async Task UpsertAsync(
+    public async Task<VectorUpsertResult> UpsertAsync(
         IEnumerable<CodeSymbol> symbols,
         IReadOnlyDictionary<string, float[]> embeddings,
         CancellationToken ct = default)
@@ -53,7 +53,7 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
             .GroupBy(s => s.Fqn)
             .Select(g => g.Last())
             .ToList();
-        if (symbolList.Count == 0) return;
+        if (symbolList.Count == 0) return VectorUpsertResult.Empty;
 
         // Count symbols that will actually hit the HNSW index (non-null, non-empty vector).
         var embeddedCount = symbolList.Count(s =>
@@ -103,6 +103,8 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
                     "Vector bulk-load insert phase: {Symbols} symbols in {InsertMs} ms",
                     symbolList.Count, insertSw.ElapsedMilliseconds);
             }
+
+            return new VectorUpsertResult(Persisted: symbolList.Count - failCount, Failed: failCount);
         }
         finally
         {

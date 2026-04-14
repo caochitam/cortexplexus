@@ -219,10 +219,20 @@ public static class AgentApiEndpoints
                 embeddingOptions.MaxParallelBatches ?? 1, ct);
             embedSw.Stop();
 
-            // Store in vector + FTS
+            // Store in vector + FTS — keep the return value so we can surface
+            // partial-persist failures to the agent (HTTP 200 is not enough
+            // information when the vector path silently drops rows; see issue #1).
             var vectorSw = Stopwatch.StartNew();
-            await vectorStore.UpsertAsync(symbols, embeddings, ct);
+            var vectorResult = await vectorStore.UpsertAsync(symbols, embeddings, ct);
             vectorSw.Stop();
+
+            var warnings = new List<string>();
+            if (vectorResult.HasFailures)
+            {
+                warnings.Add(
+                    $"vector_upsert: {vectorResult.Failed} of {vectorResult.Total} symbols failed to persist. " +
+                    "Check server logs for stack trace. Re-run indexing after resolving the root cause.");
+            }
 
             // Update file hashes
             foreach (var (filePath, hash) in request.FileHashes)
@@ -233,9 +243,11 @@ public static class AgentApiEndpoints
 
             sw.Stop();
             logger.LogInformation(
-                "Agent index results stored: {Symbols} symbols, {Rels} relationships, {Embeds} embeddings in {Duration:F1}s " +
+                "Agent index results stored: {Symbols} symbols, {Rels} relationships, {Embeds} embeddings ({VectorOk}/{VectorTotal} persisted) in {Duration:F1}s " +
                 "(graph={GraphTime:F1}s, embed={EmbedTime:F1}s, vector={VectorTime:F1}s)",
-                symbols.Count, relationships.Count, embeddings.Count, sw.Elapsed.TotalSeconds,
+                symbols.Count, relationships.Count, embeddings.Count,
+                vectorResult.Persisted, vectorResult.Total,
+                sw.Elapsed.TotalSeconds,
                 graphSw.Elapsed.TotalSeconds, embedSw.Elapsed.TotalSeconds, vectorSw.Elapsed.TotalSeconds);
 
             return Results.Ok(new IndexResultsResponse
@@ -244,6 +256,9 @@ public static class AgentApiEndpoints
                 Symbols = symbols.Count,
                 Relationships = relationships.Count,
                 Embeddings = embeddings.Count,
+                EmbeddingsPersisted = vectorResult.Persisted,
+                EmbeddingsFailed = vectorResult.Failed,
+                Warnings = warnings,
                 DurationSeconds = sw.Elapsed.TotalSeconds
             });
         });

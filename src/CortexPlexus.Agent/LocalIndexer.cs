@@ -347,18 +347,57 @@ public sealed class LocalIndexer
         var response = await _httpClient.PostAsJsonAsync(url, payload, JsonOptions);
         sw.Stop();
 
-        if (response.IsSuccessStatusCode)
-        {
-            _logger.LogInformation("  → OK ({Duration:F1}s)", sw.Elapsed.TotalSeconds);
-        }
-        else
+        if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
             _logger.LogError("  → ERROR {Status}: {Error}", response.StatusCode, error);
             // Throw để abort chunked upload — partial state vẫn ở server, có thể resume
             throw new InvalidOperationException($"Chunk upload failed: {response.StatusCode} — {error}");
         }
+
+        // HTTP 200 alone is not enough: the server will return 200 even when the
+        // vector store silently dropped rows (historically hidden as WARN logs —
+        // see issue #1). Parse the body and escalate any partial-persist failures
+        // so the user's AI agent does not conclude "indexed" when it isn't.
+        var body = await response.Content.ReadFromJsonAsync<UploadAck>(JsonOptions);
+        if (body is null)
+        {
+            _logger.LogWarning("  → OK but response body missing; cannot verify persist counts");
+            return;
+        }
+
+        if (body.EmbeddingsFailed > 0)
+        {
+            foreach (var w in body.Warnings ?? [])
+                _logger.LogError("  → SERVER WARNING: {Warning}", w);
+
+            _logger.LogError(
+                "  → PARTIAL PERSIST: {Failed} of {Total} embedding rows failed for chunk [{Label}]. " +
+                "Server logs have the stack trace. Aborting upload; queries will return stale / incomplete results.",
+                body.EmbeddingsFailed, body.EmbeddingsPersisted + body.EmbeddingsFailed, chunkLabel);
+            throw new InvalidOperationException(
+                $"Server reported {body.EmbeddingsFailed} failed embedding upserts in chunk [{chunkLabel}]. " +
+                "Do not query until the underlying issue is fixed and the chunk is re-uploaded.");
+        }
+
+        _logger.LogInformation(
+            "  → OK ({Duration:F1}s) — persisted {Persisted} embeddings",
+            sw.Elapsed.TotalSeconds, body.EmbeddingsPersisted);
     }
+
+    /// <summary>
+    /// Trimmed view of the server's IndexResultsResponse — only the fields the
+    /// agent uses to decide success/failure. Avoids a cross-project dependency
+    /// on CortexPlexus.App's DTOs.
+    /// </summary>
+    private sealed record UploadAck(
+        int Symbols,
+        int Relationships,
+        int Embeddings,
+        int EmbeddingsPersisted,
+        int EmbeddingsFailed,
+        IReadOnlyList<string>? Warnings,
+        double DurationSeconds);
 
     /// <summary>
     /// Relationship DTO cho serialization. Dùng class thay vì anonymous type để

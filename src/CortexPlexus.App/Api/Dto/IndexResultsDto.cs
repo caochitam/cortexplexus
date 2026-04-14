@@ -98,4 +98,23 @@ public sealed record IndexResultsResponse
     public required int Relationships { get; init; }
     public required int Embeddings { get; init; }
     public required double DurationSeconds { get; init; }
+
+    /// <summary>
+    /// Number of symbols whose embedding row landed in the vector store.
+    /// Equals <see cref="Embeddings"/> on a healthy batch; less when the
+    /// vector upsert hit a partial failure (e.g. pgvector type mismatch —
+    /// historically these were only WARN-logged server-side).
+    /// </summary>
+    public required int EmbeddingsPersisted { get; init; }
+
+    /// <summary>
+    /// Number of symbols whose embedding upsert failed. Non-zero means the
+    /// batch was NOT fully indexed — the agent should treat this as an error
+    /// even though the HTTP status is 200, and the user-facing AI agent should
+    /// not assume indexing is complete.
+    /// </summary>
+    public required int EmbeddingsFailed { get; init; }
+
+    /// <summary>Human-readable warning messages collected during persist. Empty on success.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
 }
