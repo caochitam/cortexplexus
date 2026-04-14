@@ -26,7 +26,8 @@ internal static class EmbeddingBatchHelper
         ISecretsScanner secretsScanner,
         ILogger logger,
         int maxParallelBatches,
-        CancellationToken ct)
+        CancellationToken ct,
+        IProgress<(int Done, int Total)>? batchProgress = null)
     {
         if (symbols.Count == 0)
             return new Dictionary<string, float[]>();
@@ -63,6 +64,7 @@ internal static class EmbeddingBatchHelper
             CancellationToken = ct
         };
 
+        var completed = 0;
         await Parallel.ForEachAsync(batches, options, async (batch, token) =>
         {
             try
@@ -88,6 +90,14 @@ internal static class EmbeddingBatchHelper
                 // R18 learning: saturated Ollama queue makes individual HTTP requests hit the
                 // default 100s timeout — those must not kill the whole batch loop.
                 logger.LogWarning(ex, "Failed to embed batch of {Count} symbols", batch.Count);
+            }
+            finally
+            {
+                // Report regardless of success/failure so the progress bar reflects
+                // wall-clock progress, not success rate. Interlocked because Parallel
+                // workers concurrent.
+                var done = Interlocked.Increment(ref completed);
+                batchProgress?.Report((done, batches.Count));
             }
         });
 

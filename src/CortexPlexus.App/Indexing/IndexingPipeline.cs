@@ -159,7 +159,21 @@ public sealed class IndexingPipeline(
 
         Report(2, $"Generating embeddings for {embeddable.Count} symbols");
         logger.LogInformation("Generating embeddings for {Count} symbols...", embeddable.Count);
-        var embeddings = await GenerateEmbeddingsAsync(embeddable, ct);
+
+        // Sub-progress: each batch finishing nudges the top-level progress value
+        // smoothly from 2 → 3 (fractional). Makes the progress bar move continuously
+        // during the longest phase (embedding, typically 60-80% of wall time).
+        var embedProgress = progress is null ? null : new Progress<(int Done, int Total)>(p =>
+        {
+            if (p.Total == 0) return;
+            progress.Report(new ProgressNotificationValue
+            {
+                Progress = 2f + (float)p.Done / p.Total,
+                Total = totalPhases,
+                Message = $"Embedding batch {p.Done}/{p.Total}"
+            });
+        });
+        var embeddings = await GenerateEmbeddingsAsync(embeddable, ct, embedProgress);
 
         var embeddedCount = embeddings.Count;
         var failedEmbeddings = embeddable.Count - embeddedCount;
@@ -268,14 +282,16 @@ public sealed class IndexingPipeline(
     }
 
     private Task<Dictionary<string, float[]>> GenerateEmbeddingsAsync(
-        IReadOnlyList<CodeSymbol> symbols, CancellationToken ct) =>
+        IReadOnlyList<CodeSymbol> symbols, CancellationToken ct,
+        IProgress<(int Done, int Total)>? batchProgress = null) =>
         EmbeddingBatchHelper.GenerateEmbeddingsAsync(
             symbols,
             embeddingService,
             secretsScanner,
             logger,
             _embeddingOptions.MaxParallelBatches ?? 1,
-            ct);
+            ct,
+            batchProgress);
 
     private async Task<List<CodeSymbol>> GenerateSummariesAsync(List<CodeSymbol> symbols, CancellationToken ct)
     {
