@@ -16,6 +16,10 @@ Versioning notes:
 
 - **Docs**: corrected the `Requirements` section of [`README.md`](README.md) — actual idle memory is ~150 MB (app 99 MiB + postgres 25 MiB), not the 4 GB previously claimed. New guidance is tiered: 1 GB min / 2 GB recommended / 4 GB only for 20K+ symbol repos or co-located Ollama.
 
+### Planned
+
+- **v0.7.0 work breakdown** is tracked in [`docs/PLAN-v0.7.0.md`](docs/PLAN-v0.7.0.md). Three items surfaced from the v0.6.0 verification run on CortexFlow (5,273 symbols / 19,437 edges / 9m17s): kind-aware Health threshold (P1), rename of the misleading `EmbeddingsPersisted` response field (P2, breaking), and an investigation into AGE edge upsert per-chunk scaling (P3). Each item ships with a doc/ADR before code.
+
 ## [0.6.0] — 2026-04-15
 
 Focus: indexing **correctness** (silent-failure bugs closed), indexing **UX** (progress + health), agent **reliability** (watch-mode resilience, auto-start), and deployment **hygiene** (pinning, image-bundled agent tarballs, runbooks).
