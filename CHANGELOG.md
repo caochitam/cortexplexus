@@ -8,7 +8,7 @@ Versioning notes:
 
 - The repo version covers the **server + stack** (Docker images, MCP tools, docs).
 - The **Local Agent** has its own version string (`CortexPlexus.Core.AgentInfo.Version`); bumped independently when wire-protocol or CLI changes.
-- Users on `ghcr.io/dt-tuan/cortexplexus:main` always get the latest commit to `main`. Users on a pinned tag (e.g. `:v0.6.0`) get a stable release.
+- Users on `ghcr.io/dt-tuan/cortexplexus:main` always get the latest commit to `main`. Users on a pinned tag (e.g. `:0.6.0` for exact, `:0.6` for latest patch in the 0.6.x series) get a stable release. Docker image tags follow OCI convention (bare semver, no `v` prefix); the git tag is `v0.6.0`.
 
 ## [Unreleased]
 
