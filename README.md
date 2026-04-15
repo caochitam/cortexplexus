@@ -268,6 +268,7 @@ CortexPlexus/
 - [`docs/runbooks/development-setup.md`](docs/runbooks/development-setup.md) — local dev setup
 - [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md) — production deployment
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) — performance benchmarks and historical rounds
+- [`CHANGELOG.md`](CHANGELOG.md) — version history and release notes
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute
 - [`SECURITY.md`](SECURITY.md) — how to report vulnerabilities
 
