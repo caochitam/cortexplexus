@@ -29,10 +29,11 @@ Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDU
 
 1. **Fork** the repo and create a feature branch off `main`.
 2. Make focused commits with clear messages. Conventional Commits style is welcome but not required.
-3. Add tests for any new behavior. We have **693 tests** across 10 projects; new code without tests is unlikely to be accepted.
+3. Add tests for any new behavior. We have **693+ tests** across 10 projects; new code without tests is unlikely to be accepted.
 4. Run the full test suite locally before pushing (see "Running tests" below).
-5. Update [`docs/TESTING.md`](docs/TESTING.md) if your change affects performance characteristics.
-6. Open a PR using the **Pull Request** template. Link the issue it closes.
+5. **Add an entry under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md)** — one bullet per user-visible change, grouped under `Added` / `Changed` / `Fixed` / `Security` / `Infrastructure` / `Breaking`. If your change is purely internal (refactor, test cleanup, formatting), say so in the PR body and the reviewer may waive the entry. Link the PR number in the bullet: `- Foo now bars correctly when baz ([#123](https://github.com/DT-Tuan/cortexplexus/pull/123))`.
+6. Update [`docs/TESTING.md`](docs/TESTING.md) if your change affects performance characteristics.
+7. Open a PR using the **Pull Request** template. Link the issue it closes.
 
 ## Development setup
 
