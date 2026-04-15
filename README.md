@@ -257,9 +257,13 @@ CortexPlexus/
 ## Requirements
 
 - **Docker + Docker Compose** (recommended), or .NET 10 SDK + PostgreSQL with AGE & pgvector for native runs
-- 4 GB RAM, 2 GB disk
-- Optional: [Ollama](https://ollama.com/) for offline embedding (default)
-- Optional: [Google Gemini API key](https://aistudio.google.com/apikey) (free tier) for cloud embedding
+- **RAM**: ~150 MB idle, ~500 MB during a typical indexing run. Rule of thumb:
+  - **1 GB** is enough for a small repo (under 2K symbols) and idle usage
+  - **2 GB** recommended for everyday use (comfortable for indexing 10K-symbol projects with HNSW bulk-load)
+  - **4 GB** if you index very large repos (20K+ symbols) or run an embedding model locally alongside
+- **Disk**: ~1 GB for the two Docker images + growing storage for indexed metadata (roughly 1-2 MB per 1K symbols). Plan 2-5 GB.
+- Optional: [Ollama](https://ollama.com/) for offline embedding (default) — budget another ~2-3 GB RAM if running it on the same host
+- Optional: [Google Gemini API key](https://aistudio.google.com/apikey) (free tier) for cloud embedding — zero local cost
 
 ## Documentation
 

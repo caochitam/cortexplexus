@@ -12,7 +12,9 @@ Versioning notes:
 
 ## [Unreleased]
 
-_No pending changes._
+### Changed
+
+- **Docs**: corrected the `Requirements` section of [`README.md`](README.md) — actual idle memory is ~150 MB (app 99 MiB + postgres 25 MiB), not the 4 GB previously claimed. New guidance is tiered: 1 GB min / 2 GB recommended / 4 GB only for 20K+ symbol repos or co-located Ollama.
 
 ## [0.6.0] — 2026-04-15
 
