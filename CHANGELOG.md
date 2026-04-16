@@ -12,6 +12,10 @@ Versioning notes:
 
 ## [Unreleased]
 
+_No pending changes._
+
+## [0.7.0] — 2026-04-15
+
 ### Changed
 
 - **Docs**: corrected the `Requirements` section of [`README.md`](README.md) — actual idle memory is ~150 MB (app 99 MiB + postgres 25 MiB), not the 4 GB previously claimed. New guidance is tiered: 1 GB min / 2 GB recommended / 4 GB only for 20K+ symbol repos or co-located Ollama.
@@ -112,6 +116,7 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/DT-Tuan/cortexplexus/releases/tag/v0.5.0
