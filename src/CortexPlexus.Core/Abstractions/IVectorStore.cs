@@ -9,13 +9,14 @@ namespace CortexPlexus.Core.Abstractions;
 /// implementation silently dropped some — e.g. pgvector type-cache misses
 /// that used to surface only as server-side WARN logs (see issue #1).
 /// </summary>
-/// <param name="Persisted">Symbols whose row was written successfully.</param>
+/// <param name="Persisted">Symbols whose row was written to <c>code_symbols</c>, with or without an embedding.</param>
 /// <param name="Failed">Symbols whose batch threw during write; each failure is logged with its exception at WARN level by the implementation.</param>
-public readonly record struct VectorUpsertResult(int Persisted, int Failed)
+/// <param name="VectorRowsWritten">Symbols whose row landed in <c>code_symbols</c> AND has a non-null <c>embedding</c> column. ≤ <c>Persisted</c>; the difference is symbols of non-embeddable kinds (field, property, event, …) which are persisted with NULL embedding by design.</param>
+public readonly record struct VectorUpsertResult(int Persisted, int Failed, int VectorRowsWritten)
 {
     public int Total => Persisted + Failed;
     public bool HasFailures => Failed > 0;
-    public static readonly VectorUpsertResult Empty = new(0, 0);
+    public static readonly VectorUpsertResult Empty = new(0, 0, 0);
 }
 
 public interface IVectorStore

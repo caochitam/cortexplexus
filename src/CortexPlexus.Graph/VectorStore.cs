@@ -104,7 +104,22 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
                     symbolList.Count, insertSw.ElapsedMilliseconds);
             }
 
-            return new VectorUpsertResult(Persisted: symbolList.Count - failCount, Failed: failCount);
+            // VectorRowsWritten = symbols that ended up with non-null embedding.
+            // Subtracts batch failures from the count of symbols that had a vector
+            // input. The exact persisted-with-vector count requires a SELECT and
+            // is not worth the round-trip; this is an honest lower-bound assuming
+            // failures distribute proportionally across embeddable + non-embeddable.
+            // For health reporting via list_repositories, the SQL probe gives the
+            // authoritative count anyway.
+            var withVectorInput = symbolList.Count(s =>
+                embeddings.TryGetValue(s.Fqn, out var v) && v.Length > 0);
+            var vectorRowsWritten = failCount == 0
+                ? withVectorInput
+                : Math.Max(0, withVectorInput - failCount);
+            return new VectorUpsertResult(
+                Persisted: symbolList.Count - failCount,
+                Failed: failCount,
+                VectorRowsWritten: vectorRowsWritten);
         }
         finally
         {

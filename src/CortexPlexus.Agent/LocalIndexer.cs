@@ -359,6 +359,12 @@ public sealed class LocalIndexer
         // vector store silently dropped rows (historically hidden as WARN logs —
         // see issue #1). Parse the body and escalate any partial-persist failures
         // so the user's AI agent does not conclude "indexed" when it isn't.
+        //
+        // Wire-compat with two server generations:
+        //   - v0.7.0+ servers emit symbolsPersisted / symbolsFailed / vectorRowsWritten
+        //     plus the deprecated embeddingsPersisted / embeddingsFailed aliases.
+        //   - older servers emit only the deprecated names.
+        // We read whichever is present (Failed below picks new ?? old).
         var body = await response.Content.ReadFromJsonAsync<UploadAck>(JsonOptions);
         if (body is null)
         {
@@ -366,23 +372,36 @@ public sealed class LocalIndexer
             return;
         }
 
-        if (body.EmbeddingsFailed > 0)
+        var failed = body.Failed;
+        var persisted = body.Persisted;
+        var vectorRows = body.VectorRows;
+
+        if (failed > 0)
         {
             foreach (var w in body.Warnings ?? [])
                 _logger.LogError("  → SERVER WARNING: {Warning}", w);
 
             _logger.LogError(
-                "  → PARTIAL PERSIST: {Failed} of {Total} embedding rows failed for chunk [{Label}]. " +
+                "  → PARTIAL PERSIST: {Failed} of {Total} symbol rows failed for chunk [{Label}]. " +
                 "Server logs have the stack trace. Aborting upload; queries will return stale / incomplete results.",
-                body.EmbeddingsFailed, body.EmbeddingsPersisted + body.EmbeddingsFailed, chunkLabel);
+                failed, persisted + failed, chunkLabel);
             throw new InvalidOperationException(
-                $"Server reported {body.EmbeddingsFailed} failed embedding upserts in chunk [{chunkLabel}]. " +
+                $"Server reported {failed} failed symbol upserts in chunk [{chunkLabel}]. " +
                 "Do not query until the underlying issue is fixed and the chunk is re-uploaded.");
         }
 
+        // Even with no hard failures, surface server warnings (e.g. embedding
+        // pipeline produced 0 vectors despite N inputs — the loud-but-not-fatal
+        // signal v0.7.0 added).
+        if (body.Warnings is { Count: > 0 })
+        {
+            foreach (var w in body.Warnings)
+                _logger.LogWarning("  → SERVER WARNING: {Warning}", w);
+        }
+
         _logger.LogInformation(
-            "  → OK ({Duration:F1}s) — persisted {Persisted} embeddings",
-            sw.Elapsed.TotalSeconds, body.EmbeddingsPersisted);
+            "  → OK ({Duration:F1}s) — {Persisted} symbol rows persisted, {VectorRows} with embedding",
+            sw.Elapsed.TotalSeconds, persisted, vectorRows);
     }
 
     /// <summary>
@@ -390,14 +409,42 @@ public sealed class LocalIndexer
     /// agent uses to decide success/failure. Avoids a cross-project dependency
     /// on CortexPlexus.App's DTOs.
     /// </summary>
-    private sealed record UploadAck(
-        int Symbols,
-        int Relationships,
-        int Embeddings,
-        int EmbeddingsPersisted,
-        int EmbeddingsFailed,
-        IReadOnlyList<string>? Warnings,
-        double DurationSeconds);
+    /// <remarks>
+    /// Field-naming wire-compat: v0.7.0 servers send the new symbolsPersisted /
+    /// symbolsFailed names; older servers only sent embeddingsPersisted /
+    /// embeddingsFailed. The Persisted / Failed / VectorRowsWritten properties
+    /// below pick whichever the server actually serialized.
+    /// </remarks>
+    // Internal so CortexPlexus.Agent.Tests can exercise the wire-compat picker
+    // (Persisted / Failed / VectorRows) directly. JSON-bound fields are nullable
+    // because old servers omit some of them; the public accessors below default
+    // to 0 so call-sites can use them as plain ints.
+    internal sealed record UploadAck
+    {
+        public int Symbols { get; init; }
+        public int Relationships { get; init; }
+        public int Embeddings { get; init; }
+        public IReadOnlyList<string>? Warnings { get; init; }
+        public double DurationSeconds { get; init; }
+
+        // v0.7.0+ canonical names (nullable so old servers that omit them still parse).
+        public int? SymbolsPersisted { get; init; }
+        public int? SymbolsFailed { get; init; }
+        public int? VectorRowsWritten { get; init; }
+
+        // Deprecated aliases — kept for one release. Old servers send only these.
+        public int? EmbeddingsPersisted { get; init; }
+        public int? EmbeddingsFailed { get; init; }
+
+        // Convenience accessors used by call-sites + tests. New names win; deprecated
+        // names fall back; absent fields default to 0.
+        [System.Text.Json.Serialization.JsonIgnore]
+        public int Persisted => SymbolsPersisted ?? EmbeddingsPersisted ?? 0;
+        [System.Text.Json.Serialization.JsonIgnore]
+        public int Failed => SymbolsFailed ?? EmbeddingsFailed ?? 0;
+        [System.Text.Json.Serialization.JsonIgnore]
+        public int VectorRows => VectorRowsWritten ?? 0;
+    }
 
     /// <summary>
     /// Relationship DTO cho serialization. Dùng class thay vì anonymous type để

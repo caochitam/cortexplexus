@@ -100,21 +100,41 @@ public sealed record IndexResultsResponse
     public required double DurationSeconds { get; init; }
 
     /// <summary>
-    /// Number of symbols whose embedding row landed in the vector store.
-    /// Equals <see cref="Embeddings"/> on a healthy batch; less when the
-    /// vector upsert hit a partial failure (e.g. pgvector type mismatch —
-    /// historically these were only WARN-logged server-side).
+    /// Number of symbol rows that landed in <c>code_symbols</c> after this chunk
+    /// (with or without an embedding column value). Equals <see cref="Symbols"/>
+    /// after dedup minus <see cref="SymbolsFailed"/>. NEW in v0.7.0.
     /// </summary>
-    public required int EmbeddingsPersisted { get; init; }
+    public required int SymbolsPersisted { get; init; }
 
     /// <summary>
-    /// Number of symbols whose embedding upsert failed. Non-zero means the
-    /// batch was NOT fully indexed — the agent should treat this as an error
-    /// even though the HTTP status is 200, and the user-facing AI agent should
-    /// not assume indexing is complete.
+    /// Number of symbol rows whose batch upsert dropped them. Non-zero means
+    /// the chunk is incomplete — the agent treats this as a hard error and
+    /// aborts the chunked upload. NEW in v0.7.0.
     /// </summary>
-    public required int EmbeddingsFailed { get; init; }
+    public required int SymbolsFailed { get; init; }
+
+    /// <summary>
+    /// Number of <c>code_symbols</c> rows where <c>embedding IS NOT NULL</c>
+    /// landed in this chunk. Distinguishes "row inserted with NULL embedding"
+    /// (expected for non-embeddable kinds) from "row inserted with vector".
+    /// Always ≤ <see cref="SymbolsPersisted"/>. NEW in v0.7.0.
+    /// </summary>
+    public required int VectorRowsWritten { get; init; }
 
     /// <summary>Human-readable warning messages collected during persist. Empty on success.</summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
+
+    /// <summary>
+    /// DEPRECATED in v0.7.0, removed in v0.8.0. Computed alias of
+    /// <see cref="SymbolsPersisted"/>. The historical name was misleading because
+    /// the value counts symbol rows, not embedding rows. Kept for one release so
+    /// agent v1.1.0 binaries still parse responses from a v0.7.0 server.
+    /// </summary>
+    public int EmbeddingsPersisted => SymbolsPersisted;
+
+    /// <summary>
+    /// DEPRECATED in v0.7.0, removed in v0.8.0. Computed alias of
+    /// <see cref="SymbolsFailed"/>.
+    /// </summary>
+    public int EmbeddingsFailed => SymbolsFailed;
 }

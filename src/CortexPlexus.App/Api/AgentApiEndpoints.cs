@@ -243,6 +243,16 @@ public static class AgentApiEndpoints
                     $"vector_upsert: {vectorResult.Failed} of {vectorResult.Total} symbols failed to persist. " +
                     "Check server logs for stack trace. Re-run indexing after resolving the root cause.");
             }
+            else if (embeddings.Count > 0 && vectorResult.VectorRowsWritten == 0)
+            {
+                // Embedding pipeline produced vectors but none landed → quieter failure
+                // mode that wouldn't trigger HasFailures (e.g. all batches succeed but
+                // every embedding column ended up NULL). Surface it loudly.
+                warnings.Add(
+                    $"vector_upsert: {embeddings.Count} embeddings sent, 0 rows with non-null embedding column. " +
+                    "Vector pipeline appears non-functional even though no exception was thrown. " +
+                    "Check server logs for `[WRN] Vector upsert` lines.");
+            }
 
             // Update file hashes
             foreach (var (filePath, hash) in request.FileHashes)
@@ -266,10 +276,14 @@ public static class AgentApiEndpoints
                 Symbols = symbols.Count,
                 Relationships = relationships.Count,
                 Embeddings = embeddings.Count,
-                EmbeddingsPersisted = vectorResult.Persisted,
-                EmbeddingsFailed = vectorResult.Failed,
+                SymbolsPersisted = vectorResult.Persisted,
+                SymbolsFailed = vectorResult.Failed,
+                VectorRowsWritten = vectorResult.VectorRowsWritten,
                 Warnings = warnings,
                 DurationSeconds = sw.Elapsed.TotalSeconds
+                // EmbeddingsPersisted / EmbeddingsFailed serialize automatically as
+                // computed-property aliases of SymbolsPersisted / SymbolsFailed
+                // (see IndexResultsResponse). Drop in v0.8.0.
             });
         });
 

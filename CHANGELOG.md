@@ -29,9 +29,18 @@ Versioning notes:
 - **`docs/ARCHITECTURE.md` §3.5** now enumerates embeddable vs non-embeddable kinds with rationale, replacing the implicit knowledge in `IndexingPipeline.cs` comments.
 - **README + MCP-GUIDE** link to `HEALTH-METRICS.md` and `agent-best-practices.md` from the docs index and the "First 3 commands" section.
 
+### Changed
+
+- **`/api/index/results` response schema**: `embeddingsPersisted` and `embeddingsFailed` are now deprecated aliases (kept as computed properties for one release). Prefer the new `symbolsPersisted` / `symbolsFailed` — the historical names were misleading because the value counts symbol rows, not embedding rows. New `vectorRowsWritten` field counts symbols whose `embedding` column ended up non-null, distinguishing "row inserted with NULL embedding" (expected for non-embeddable kinds) from "row inserted with vector". Old (1.1.0) agents keep working against new servers; new (1.2.0+) agents keep working against old servers via the wire-compat picker in `LocalIndexer.UploadAck`. Removal target: v0.8.0. See [`docs/API.md`](docs/API.md).
+- **`VectorUpsertResult` record** in `CortexPlexus.Core` gains a `VectorRowsWritten` member alongside `Persisted` / `Failed`. Used by the App-side `/api/index/results` handler to populate the new response field.
+
+### Added
+
+- **NEW [`docs/API.md`](docs/API.md)** — concise REST API reference for `/api/agent/version`, `/api/agent/download`, `/api/index/results`, and `/api/index/{name}/hashes`. Documents the new field names, the deprecated aliases, and the wire-compat policy.
+
 ### Planned
 
-- **v0.7.0 work breakdown** is tracked in [`docs/PLAN-v0.7.0.md`](docs/PLAN-v0.7.0.md). Wave 1 (kind-aware Health) shipped in this Unreleased range; Wave 2 (rename `EmbeddingsPersisted` → `SymbolsPersisted` + new `VectorRowsWritten` + API.md) and Wave 3 (AGE edge upsert scaling investigation, ADR 009) remain.
+- **v0.7.0 work breakdown** is tracked in [`docs/PLAN-v0.7.0.md`](docs/PLAN-v0.7.0.md). Wave 1 (kind-aware Health) and Wave 2 (rename `EmbeddingsPersisted` → `SymbolsPersisted` + `VectorRowsWritten` + API.md) shipped in this Unreleased range. Wave 3 (AGE edge upsert scaling investigation, ADR 009) remains.
 
 ## [0.6.0] — 2026-04-15
 
