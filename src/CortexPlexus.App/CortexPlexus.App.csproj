@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="CortexPlexus.App.Tests" />
+    <InternalsVisibleTo Include="CortexPlexus.Mcp.Tests" />
   </ItemGroup>
 
   <ItemGroup>

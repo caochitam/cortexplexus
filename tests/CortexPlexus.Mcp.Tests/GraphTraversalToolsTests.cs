@@ -412,6 +412,40 @@ public class GraphTraversalToolsTests
         Assert.DoesNotContain("stale duplicate", result);
     }
 
+    // === ADR 008: kind-aware Health metric (docs/HEALTH-METRICS.md) ===
+
+    [Theory]
+    // (total, embeddable, withEmbedding, expectedSubstring)
+    [InlineData(0, 0, 0, "EMPTY")]
+    [InlineData(50, 0, 0, "no embeddable kinds")]                       // config-only repo
+    [InlineData(5273, 2130, 0, "DEGRADED")]                              // issue-#1 silent drop
+    [InlineData(5273, 2130, 2130, "OK")]                                 // CortexFlow real numbers
+    [InlineData(5273, 2130, 2130, "100%")]                               // shows full coverage
+    [InlineData(5273, 2130, 2130, "of 2130 embeddable kinds")]           // self-explanatory denominator
+    [InlineData(95, 60, 54, "OK")]                                       // 90% of embeddable, just at threshold
+    [InlineData(95, 60, 53, "PARTIAL")]                                  // 88% of embeddable, just below
+    [InlineData(95, 60, 30, "PARTIAL")]                                  // 50% — clearly partial
+    [InlineData(100, 50, 50, "OK")]                                      // 100% of half-embeddable kinds
+    public void FormatHealthLabel_KindAware(long total, long embeddable, long withEmbedding, string expectedSubstring)
+    {
+        // Old logic compared withEmbedding/total. With (5273, 2130, 2130) that was 40%
+        // and the label was "PARTIAL — 2130/5273 (40%)". After ADR 008 it must be OK.
+        var label = CortexPlexus.App.Mcp.Tools.GraphTraversalTools.FormatHealthLabel(total, embeddable, withEmbedding);
+        Assert.Contains(expectedSubstring, label);
+    }
+
+    [Fact]
+    public void FormatHealthLabel_HealthyDotNetRepo_DoesNotSayPartial()
+    {
+        // Regression guard for the v0.6.0 false alarm: every healthy .NET repo
+        // showed PARTIAL because the old denominator was total symbols.
+        // CortexFlow real numbers from 2026-04-15 indexing run.
+        var label = CortexPlexus.App.Mcp.Tools.GraphTraversalTools.FormatHealthLabel(5273, 2130, 2130);
+        Assert.StartsWith("OK", label);
+        Assert.DoesNotContain("PARTIAL", label);
+        Assert.DoesNotContain("DEGRADED", label);
+    }
+
     // === R22 Fix #3: hint when class FQN is given to method-expecting tools ===
 
     [Fact]

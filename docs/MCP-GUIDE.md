@@ -123,11 +123,13 @@ If you're hacking on CortexPlexus, you're the rare case where the IDE *and* the 
 
 ```
 1. ActivateAgent(projectPath: "<workspace>")   → Install + start local indexing agent
-2. ListRepositories()                           → Verify project is indexed
+2. ListRepositories()                           → Verify project is indexed (check the Health: line)
 3. GetHelp("tools")                             → Learn all 26 available tools
 ```
 
 That's it. The agent indexes your code locally (source never leaves your machine), and `GetHelp()` teaches you everything else.
+
+The Health line on every entry is your early-warning signal: `OK` means the repo is fully queryable, `PARTIAL` / `DEGRADED` / `EMPTY` mean some semantic hits will be missing — see [`HEALTH-METRICS.md`](HEALTH-METRICS.md) for what each label means and how to recover. For best practices on the agent itself (single-`.sln` indexing, watch mode, throughput tuning), see [`runbooks/agent-best-practices.md`](runbooks/agent-best-practices.md).
 
 > **Add to your system prompt:**
 > *"At session start, call ActivateAgent() then GetHelp() from CortexPlexus MCP."*

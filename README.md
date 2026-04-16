@@ -273,6 +273,8 @@ CortexPlexus/
 - [`docs/runbooks/deployment.md`](docs/runbooks/deployment.md) — production deployment
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) — performance benchmarks and historical rounds
 - [`CHANGELOG.md`](CHANGELOG.md) — version history and release notes
+- [`docs/HEALTH-METRICS.md`](docs/HEALTH-METRICS.md) — what `Health: OK / PARTIAL / DEGRADED` means and how to interpret it
+- [`docs/runbooks/agent-best-practices.md`](docs/runbooks/agent-best-practices.md) — single-`.sln` indexing, watch mode, throughput tuning
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute
 - [`SECURITY.md`](SECURITY.md) — how to report vulnerabilities
 

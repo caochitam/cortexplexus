@@ -192,6 +192,16 @@ ts_rank('{0.1, 0.2, 0.4, 1.0}', search_text, query)
 
 **Strategy:** Embed `signature + summary` (not full body). Reduce dimensions to 768 for storage.
 
+**Embeddable kinds (intentional subset of all parsed symbols):**
+
+```
+class · method · interface · struct · record · function · type · document · section
+```
+
+Other kinds (`field`, `property`, `event`, `constructor`, `enum`, `enum_member`, `parameter`, `namespace`, `di_registration`, `api_endpoint`, `middleware`, `config_key`, `dbcontext`) are persisted to `code_symbols` with `embedding IS NULL` — they are reachable via graph traversal and full-text search but skip semantic search by design. Embedding low-signal kinds (a property accessor, a constructor) adds noise without unlocking new questions.
+
+The implementation reference is the `embeddable` filter in `IndexingPipeline.IndexAsync`. The same enum drives the kind-aware [Health metric](HEALTH-METRICS.md) shown by `list_repositories`. If you change the filter, update both `HEALTH-METRICS.md` and the constant referenced by `GraphTraversalTools.cs` in the same PR — they are intentionally a single source of truth.
+
 ### 3.6 CortexPlexus.App
 **Responsibility:** Monolith entry point. Hosts Web UI + MCP Server + REST API + Background Indexer + CLI.
 

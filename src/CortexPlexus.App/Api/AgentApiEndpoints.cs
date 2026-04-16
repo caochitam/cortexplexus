@@ -218,8 +218,10 @@ public static class AgentApiEndpoints
 
             // Generate embeddings server-side (from signatures only, no source code)
             var embedSw = Stopwatch.StartNew();
+            // Same allow-list as IndexingPipeline + the Health metric. See
+            // CortexPlexus.Core.EmbeddableKinds and docs/HEALTH-METRICS.md.
             var embeddable = symbols
-                .Where(s => s.Kind is "class" or "method" or "interface" or "struct" or "record" or "function" or "type" or "document" or "section")
+                .Where(s => EmbeddableKinds.Contains(s.Kind))
                 .ToList();
 
             var embeddings = await EmbeddingBatchHelper.GenerateEmbeddingsAsync(

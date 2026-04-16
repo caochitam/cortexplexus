@@ -1,3 +1,4 @@
+using CortexPlexus.Core;
 using CortexPlexus.Core.Abstractions;
 using CortexPlexus.Core.Models;
 using CortexPlexus.Embedding;
@@ -152,9 +153,11 @@ public sealed class IndexingPipeline(
             .Select(s => SetRepoId(s, repo.Id))
             .ToList();
 
-        // Generate embeddings for methods and classes
+        // Generate embeddings for the kinds enumerated in CortexPlexus.Core.EmbeddableKinds.
+        // Single source of truth — also used by the agent-upload endpoint and the kind-aware
+        // Health metric (ADR 008 / docs/HEALTH-METRICS.md).
         var embeddable = symbols
-            .Where(s => s.Kind is "class" or "method" or "interface" or "struct" or "record" or "function" or "type" or "document" or "section")
+            .Where(s => EmbeddableKinds.Contains(s.Kind))
             .ToList();
 
         Report(2, $"Generating embeddings for {embeddable.Count} symbols");

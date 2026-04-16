@@ -16,9 +16,22 @@ Versioning notes:
 
 - **Docs**: corrected the `Requirements` section of [`README.md`](README.md) — actual idle memory is ~150 MB (app 99 MiB + postgres 25 MiB), not the 4 GB previously claimed. New guidance is tiered: 1 GB min / 2 GB recommended / 4 GB only for 20K+ symbol repos or co-located Ollama.
 
+### Fixed
+
+- **`list_repositories` Health metric is now kind-aware** ([ADR 008](docs/decisions/008-kind-aware-health-metric.md), [HEALTH-METRICS.md](docs/HEALTH-METRICS.md)). Previously every healthy .NET repo showed `PARTIAL` because the metric compared `embeddings / total_symbols`, but field/property/event/constructor are intentionally not embedded — so a typical .NET repo's ratio caps around 30-50%. CortexFlow showed `PARTIAL — 2130/5273 (40%)` despite being 100% healthy. Now compares `embeddings / embeddable_symbols` (where embeddable kinds = class, method, interface, struct, record, function, type, document, section). Output also shows both numerators ("100% of 2130 embeddable kinds") so the calculus is self-explanatory.
+
+### Added
+
+- **NEW [`docs/HEALTH-METRICS.md`](docs/HEALTH-METRICS.md)** — user-facing spec for the `Health:` line: every label, condition, and recovery action.
+- **NEW [`docs/decisions/008-kind-aware-health-metric.md`](docs/decisions/008-kind-aware-health-metric.md)** — ADR explaining why embeddable kinds (not total) is the right denominator, with three rejected alternatives.
+- **NEW [`docs/runbooks/agent-best-practices.md`](docs/runbooks/agent-best-practices.md)** — single-`.sln` indexing (3× faster than per-`.csproj`), watch-mode behavior, throughput tuning, force-reindex flow.
+- **NEW `CortexPlexus.Core.EmbeddableKinds`** — single source of truth for the embeddable-kind allow-list, used by `IndexingPipeline`, `AgentApiEndpoints`, and `GraphTraversalTools.ListRepositories`. Replaces three duplicated `s.Kind is "class" or "method" or ...` literals.
+- **`docs/ARCHITECTURE.md` §3.5** now enumerates embeddable vs non-embeddable kinds with rationale, replacing the implicit knowledge in `IndexingPipeline.cs` comments.
+- **README + MCP-GUIDE** link to `HEALTH-METRICS.md` and `agent-best-practices.md` from the docs index and the "First 3 commands" section.
+
 ### Planned
 
-- **v0.7.0 work breakdown** is tracked in [`docs/PLAN-v0.7.0.md`](docs/PLAN-v0.7.0.md). Three items surfaced from the v0.6.0 verification run on CortexFlow (5,273 symbols / 19,437 edges / 9m17s): kind-aware Health threshold (P1), rename of the misleading `EmbeddingsPersisted` response field (P2, breaking), and an investigation into AGE edge upsert per-chunk scaling (P3). Each item ships with a doc/ADR before code.
+- **v0.7.0 work breakdown** is tracked in [`docs/PLAN-v0.7.0.md`](docs/PLAN-v0.7.0.md). Wave 1 (kind-aware Health) shipped in this Unreleased range; Wave 2 (rename `EmbeddingsPersisted` → `SymbolsPersisted` + new `VectorRowsWritten` + API.md) and Wave 3 (AGE edge upsert scaling investigation, ADR 009) remain.
 
 ## [0.6.0] — 2026-04-15
 

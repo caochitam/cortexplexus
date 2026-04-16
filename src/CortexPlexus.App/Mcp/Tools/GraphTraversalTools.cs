@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using CortexPlexus.Core;
 using CortexPlexus.Core.Abstractions;
 using CortexPlexus.Core.Models;
 using CortexPlexus.Search;
@@ -342,25 +343,32 @@ public sealed class GraphTraversalTools
         if (repos.Count == 0)
             return "No repositories indexed yet.";
 
-        // DB health check: per-repo symbol count + embedding coverage.
-        // Lets the AI agent see "registered but empty" repos (issue #1 symptom)
-        // without needing a separate tool call. Skipped when dataSource is null —
-        // happens in unit tests that don't spin up Postgres; real MCP invocation
-        // always gets one via DI.
-        var healthByRepo = new Dictionary<Guid, (long Symbols, long WithEmbedding)>();
+        // DB health check: per-repo total / embeddable / actually-embedded symbol counts.
+        // The label is computed against EMBEDDABLE kinds (class, method, interface,
+        // struct, record, function, type, document, section) — not against the total —
+        // because field / property / event / constructor / enum / parameter / namespace
+        // are intentionally not embedded. Comparing to total made every healthy .NET
+        // repo show "PARTIAL" (ADR 008, docs/HEALTH-METRICS.md).
+        //
+        // Skipped when dataSource is null — happens in unit tests that don't spin up
+        // Postgres; real MCP invocation always gets one via DI.
+        var healthByRepo = new Dictionary<Guid, (long Total, long Embeddable, long WithEmbedding)>();
         if (dataSource is not null)
         {
             await using var conn = await dataSource.OpenConnectionAsync();
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                SELECT repo_id, COUNT(*), COUNT(*) FILTER (WHERE embedding IS NOT NULL)
+            cmd.CommandText = $$"""
+                SELECT repo_id,
+                       COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE kind IN ({{EmbeddableKinds.SqlInClause}})) AS embeddable,
+                       COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS with_embedding
                 FROM code_symbols
                 GROUP BY repo_id
                 """;
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
-                healthByRepo[reader.GetGuid(0)] = (reader.GetInt64(1), reader.GetInt64(2));
+                healthByRepo[reader.GetGuid(0)] = (reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
             }
         }
 
@@ -396,15 +404,7 @@ public sealed class GraphTraversalTools
             }
             else if (healthByRepo.TryGetValue(r.Id, out var h))
             {
-                var coverage = h.Symbols > 0 ? (double)h.WithEmbedding / h.Symbols : 0;
-                var status = h.Symbols switch
-                {
-                    0 => "EMPTY — registered but no symbols persisted. Re-run indexing.",
-                    _ when h.WithEmbedding == 0 => "DEGRADED — symbols present but no embeddings. Semantic search will fail; check server logs for vector-upsert warnings.",
-                    _ when coverage < 0.9 => $"PARTIAL — {h.WithEmbedding}/{h.Symbols} ({coverage:P0}) symbols embedded. Some semantic hits will be missing.",
-                    _ => $"OK — {h.Symbols} symbols, {h.WithEmbedding} with embeddings ({coverage:P0})"
-                };
-                sb.AppendLine($"  Health: {status}");
+                sb.AppendLine($"  Health: {FormatHealthLabel(h.Total, h.Embeddable, h.WithEmbedding)}");
             }
             else
             {
@@ -421,6 +421,27 @@ public sealed class GraphTraversalTools
 
         sb.AppendLine("Tip: Use the 'repository' parameter in SearchCode/SemanticSearch/GetDiRegistrations/GetApiEndpoints to scope results to a specific project.");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Render the Health label for a repository given its three counts. Pure logic
+    /// (no DB / no MCP plumbing) so unit tests can exercise every branch without
+    /// spinning up Postgres. See ADR 008 / docs/HEALTH-METRICS.md for semantics.
+    /// </summary>
+    internal static string FormatHealthLabel(long total, long embeddable, long withEmbedding)
+    {
+        // Coverage compares ACTUAL embeddings to EMBEDDABLE kinds (not to total).
+        // Comparing to total made every healthy .NET repo show "PARTIAL" because
+        // field/property/event/constructor are intentionally not embedded.
+        var coverage = embeddable > 0 ? (double)withEmbedding / embeddable : 0;
+        return (total, embeddable, withEmbedding) switch
+        {
+            (0, _, _) => "EMPTY — registered but no symbols persisted. Re-run indexing.",
+            (_, 0, _) => $"OK — {total} symbols, no embeddable kinds (config-only or schema-only repo)",
+            (_, _, 0) => $"DEGRADED — {total} symbols indexed, 0 with embeddings out of {embeddable} embeddable. Semantic search will fail for this repo; check server logs for vector-upsert warnings.",
+            _ when coverage >= 0.9 => $"OK — {total} symbols, {withEmbedding} embeddings ({coverage:P0} of {embeddable} embeddable kinds)",
+            _ => $"PARTIAL — {withEmbedding}/{embeddable} ({coverage:P0}) embeddable symbols embedded ({total} total). Some semantic hits will be missing — re-run indexing or call force_reindex."
+        };
     }
 
     [McpServerTool, Description(
