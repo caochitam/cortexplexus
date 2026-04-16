@@ -433,14 +433,24 @@ public sealed class GraphTraversalTools
         // Coverage compares ACTUAL embeddings to EMBEDDABLE kinds (not to total).
         // Comparing to total made every healthy .NET repo show "PARTIAL" because
         // field/property/event/constructor are intentionally not embedded.
+        //
+        // Percent is rendered with InvariantCulture so the output is deterministic
+        // across deployments — some locales (e.g. vi-VN) render `P0` as "100 %"
+        // with a non-breaking space, which drifts from snapshot tests and is just
+        // ugly in JSON-parseable outputs. InvariantCulture always emits "100 %"
+        // with a regular space — we then strip the space manually for a stable
+        // "100%" form.
         var coverage = embeddable > 0 ? (double)withEmbedding / embeddable : 0;
+        var coveragePct = coverage.ToString("P0", System.Globalization.CultureInfo.InvariantCulture)
+            .Replace("\u00A0", "").Replace(" ", "");  // normalize both non-breaking and regular space
+
         return (total, embeddable, withEmbedding) switch
         {
             (0, _, _) => "EMPTY — registered but no symbols persisted. Re-run indexing.",
             (_, 0, _) => $"OK — {total} symbols, no embeddable kinds (config-only or schema-only repo)",
             (_, _, 0) => $"DEGRADED — {total} symbols indexed, 0 with embeddings out of {embeddable} embeddable. Semantic search will fail for this repo; check server logs for vector-upsert warnings.",
-            _ when coverage >= 0.9 => $"OK — {total} symbols, {withEmbedding} embeddings ({coverage:P0} of {embeddable} embeddable kinds)",
-            _ => $"PARTIAL — {withEmbedding}/{embeddable} ({coverage:P0}) embeddable symbols embedded ({total} total). Some semantic hits will be missing — re-run indexing or call force_reindex."
+            _ when coverage >= 0.9 => $"OK — {total} symbols, {withEmbedding} embeddings ({coveragePct} of {embeddable} embeddable kinds)",
+            _ => $"PARTIAL — {withEmbedding}/{embeddable} ({coveragePct}) embeddable symbols embedded ({total} total). Some semantic hits will be missing — re-run indexing or call force_reindex."
         };
     }
 
