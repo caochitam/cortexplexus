@@ -55,16 +55,19 @@ Apply the **same bulk-load pattern as the HNSW vector index** (ADR referencing R
 
 The switch point mirrors VectorStore.BulkLoadThreshold: when the batch size exceeds a threshold (e.g. 500 edges), use delete+CREATE; below that, keep MERGE.
 
-### Expected improvement (analytical)
+### Measured improvement (CortexFlow 19K edges, LXC reference)
 
-Current per-batch (200 edges):
-- MERGE: 200 × (vertex GIN lookup ~12ms + edge seq scan ~1-3ms) ≈ 2.6–3.0s per batch
-  (observed 11-30s suggests cache-miss overhead and AGE planner overhead on top)
+| Path | Chunk timing (5K edges) | Total 4 chunks | Scaling |
+|------|------------------------|----------------|---------|
+| MERGE (before) | 11.8 → 20.9 → 28.5 → 30.4s | 91.6s | **LINEAR** (~+9s/chunk) |
+| delete+CREATE (after) | 39.1 → 39.5 → 38.3 → 39.2s | 156.1s | **FLAT** |
+| DELETE overhead | 142–429ms per chunk | <1.5s total | negligible |
 
-After delete+CREATE:
-- Single DELETE pass: one Cypher `MATCH (n)-[r]->() WHERE n.fqn IN [...] DELETE r` — bounded by vertex count (~5K vertices, GIN indexed, ~1-2s)
-- CREATE: 200 × (vertex MATCH ~5ms + edge CREATE ~0.1ms) ≈ ~1.0s per batch
-- Projected 4-chunk total: ~6s (vs current ~91s = ~15× improvement)
+**CREATE constant factor was higher than projected** — AGE's edge CREATE allocates graph IDs + writes WAL + updates internal catalog at ~7.8ms/edge vs MERGE's ~2.4ms/edge start. But MERGE grows with graph size while CREATE stays flat.
+
+**Break-even**: ~35K edges per UpsertEdgesAsync call. Below that, MERGE is faster; above, delete+CREATE wins.
+
+**Threshold tuned to 20K** (was 500) so the local agent's chunked upload path (5K/chunk) always uses the faster MERGE, while the server-side IndexingPipeline (which passes all edges in one call for repos >20K edges) gets the flat-scaling benefit.
 
 ## Alternatives considered
 

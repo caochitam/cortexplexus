@@ -131,9 +131,21 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
 
     // ADR 009: threshold above which we switch from MERGE to delete+CREATE
     // for edge upsert. Same concept as VectorStore.BulkLoadThreshold for HNSW.
-    // MERGE does a sequential scan per edge on the label table; delete+CREATE
-    // skips the existence check entirely.
-    private const int EdgeBulkLoadThreshold = 500;
+    //
+    // MERGE does a sequential scan per edge on the label table (linear degradation);
+    // delete+CREATE has higher constant cost (~7.8ms/edge vs MERGE's ~2.4ms start)
+    // but stays flat as the graph grows.
+    //
+    // Measured on CortexFlow 19K edges (2026-04-15):
+    //   MERGE 4 chunks:         91.6s (11.8→20.9→28.5→30.4, linear)
+    //   delete+CREATE 4 chunks: 156.1s (39→39→38→39, flat)
+    //   Break-even:             ~35K edges per single UpsertEdgesAsync call
+    //
+    // Set at 20K so the agent's chunked uploads (5K/chunk) always use MERGE
+    // (acceptable linear growth at that scale), while the server-side
+    // IndexingPipeline (which passes ALL edges in one call) triggers bulk-load
+    // for large repos. Tune based on profiling.
+    private const int EdgeBulkLoadThreshold = 20_000;
 
     public async Task UpsertEdgesAsync(IEnumerable<Relationship> relationships, CancellationToken ct = default)
     {
