@@ -129,6 +129,12 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         await ExecuteCypher(conn, sb.ToString(), ct);
     }
 
+    // ADR 009: threshold above which we switch from MERGE to delete+CREATE
+    // for edge upsert. Same concept as VectorStore.BulkLoadThreshold for HNSW.
+    // MERGE does a sequential scan per edge on the label table; delete+CREATE
+    // skips the existence check entirely.
+    private const int EdgeBulkLoadThreshold = 500;
+
     public async Task UpsertEdgesAsync(IEnumerable<Relationship> relationships, CancellationToken ct = default)
     {
         var relList = relationships as IList<Relationship> ?? relationships.ToList();
@@ -137,8 +143,31 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await SetAgePath(conn, ct);
 
+        var useBulkLoad = relList.Count >= EdgeBulkLoadThreshold;
+        if (useBulkLoad)
+        {
+            // Collect all source FQNs so we can delete their outgoing edges in
+            // one Cypher pass, then CREATE fresh (no per-edge existence check).
+            // This is the edge equivalent of VectorStore's HNSW drop+rebuild.
+            var srcFqns = relList
+                .Select(r => r.FromFqn)
+                .Where(f => !string.IsNullOrWhiteSpace(f))
+                .Distinct()
+                .ToList();
+
+            if (srcFqns.Count > 0)
+            {
+                var deleteSw = System.Diagnostics.Stopwatch.StartNew();
+                await DeleteEdgesBySourceFqns(conn, srcFqns, ct);
+                deleteSw.Stop();
+                logger.LogInformation(
+                    "Edge bulk-load: deleted outgoing edges for {Sources} source vertices in {Ms} ms",
+                    srcFqns.Count, deleteSw.ElapsedMilliseconds);
+            }
+        }
+
         // Group by (edge type, sorted metadata keys) so each batch has a uniform SET clause.
-        // Cypher requires static edge type in MERGE, and UNWIND batches need the same
+        // Cypher requires static edge type in MERGE / CREATE, and UNWIND batches need the same
         // shape across all items (same set of properties).
         var grouped = relList
             .Where(r => !string.IsNullOrWhiteSpace(r.FromFqn) && !string.IsNullOrWhiteSpace(r.ToFqn))
@@ -162,7 +191,10 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    await UpsertEdgesBatchAsync(conn, edgeLabel, metaKeys, batch, ct);
+                    if (useBulkLoad)
+                        await CreateEdgesBatchAsync(conn, edgeLabel, metaKeys, batch, ct);
+                    else
+                        await UpsertEdgesBatchAsync(conn, edgeLabel, metaKeys, batch, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -174,6 +206,78 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
 
         if (failCount > 0)
             logger.LogWarning("Graph upsert: {Failed} of {Total} edges failed", failCount, relList.Count);
+    }
+
+    /// <summary>
+    /// Delete all outgoing edges from the given source vertices. Used by the
+    /// bulk-load path (ADR 009) to clear stale edges before CREATE-fresh.
+    /// </summary>
+    private async Task DeleteEdgesBySourceFqns(
+        NpgsqlConnection conn,
+        IReadOnlyList<string> srcFqns,
+        CancellationToken ct)
+    {
+        // Chunk to avoid massive Cypher strings; 500 FQNs at a time.
+        foreach (var chunk in Chunk((IList<string>)srcFqns, 500))
+        {
+            var sb = new System.Text.StringBuilder(chunk.Count * 80);
+            sb.Append("MATCH (n)-[r]->() WHERE n.fqn IN [");
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append('\'').Append(EscapeCypher(chunk[i])).Append('\'');
+            }
+            sb.Append("] DELETE r");
+            await ExecuteCypher(conn, sb.ToString(), ct);
+        }
+    }
+
+    /// <summary>
+    /// CREATE edges (no existence check). Used by bulk-load after edges have
+    /// been deleted. Uses MATCH on existing vertices instead of MERGE.
+    /// </summary>
+    private static async Task CreateEdgesBatchAsync(
+        NpgsqlConnection conn,
+        string edgeLabel,
+        string[] metaKeys,
+        IList<Relationship> batch,
+        CancellationToken ct)
+    {
+        var sanitizedKeys = metaKeys.Select(SanitizeIdentifier).ToArray();
+        var sb = new System.Text.StringBuilder(batch.Count * 200);
+        sb.Append("UNWIND [");
+
+        for (var i = 0; i < batch.Count; i++)
+        {
+            var rel = batch[i];
+            if (i > 0) sb.Append(", ");
+            sb.Append('{');
+            sb.Append("src: '").Append(EscapeCypher(rel.FromFqn)).Append("', ");
+            sb.Append("dst: '").Append(EscapeCypher(rel.ToFqn)).Append('\'');
+            for (var k = 0; k < metaKeys.Length; k++)
+            {
+                var value = rel.Metadata is { } meta && meta.TryGetValue(metaKeys[k], out var v) ? v : "";
+                sb.Append(", m_").Append(sanitizedKeys[k])
+                  .Append(": '").Append(EscapeCypher(value)).Append('\'');
+            }
+            sb.Append('}');
+        }
+
+        sb.Append("] AS e ");
+        // MATCH instead of MERGE — vertices were created in the node phase.
+        // CREATE instead of MERGE — edges were deleted by DeleteEdgesBySourceFqns.
+        sb.Append("MATCH (a {fqn: e.src}) ");
+        sb.Append("MATCH (b {fqn: e.dst}) ");
+        sb.Append("CREATE (a)-[r:").Append(edgeLabel).Append("]->(b) ");
+        sb.Append("SET r.type = '").Append(edgeLabel).Append('\'');
+
+        for (var k = 0; k < sanitizedKeys.Length; k++)
+        {
+            sb.Append(", r.").Append(sanitizedKeys[k])
+              .Append(" = e.m_").Append(sanitizedKeys[k]);
+        }
+
+        await ExecuteCypher(conn, sb.ToString(), ct);
     }
 
     private static async Task UpsertEdgesBatchAsync(

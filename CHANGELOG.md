@@ -38,9 +38,9 @@ Versioning notes:
 
 - **NEW [`docs/API.md`](docs/API.md)** — concise REST API reference for `/api/agent/version`, `/api/agent/download`, `/api/index/results`, and `/api/index/{name}/hashes`. Documents the new field names, the deprecated aliases, and the wire-compat policy.
 
-### Planned
+### Fixed
 
-- **v0.7.0 work breakdown** is tracked in [`docs/PLAN-v0.7.0.md`](docs/PLAN-v0.7.0.md). Wave 1 (kind-aware Health) and Wave 2 (rename `EmbeddingsPersisted` → `SymbolsPersisted` + `VectorRowsWritten` + API.md) shipped in this Unreleased range. Wave 3 (AGE edge upsert scaling investigation, ADR 009) remains.
+- **AGE edge upsert scaling** ([ADR 009](docs/decisions/009-age-edge-upsert-scaling.md)). Edge phase on CortexFlow (19K edges / 4 chunks) slowed linearly: 11.8s → 20.9s → 28.5s → 30.4s (total 91.6s). Root cause: AGE's `MERGE (a)-[r:Type]->(b)` performs a sequential scan on the edge label table per edge, and the table grows with each chunk. Fix: for bulk indexing (≥500 edges), delete all outgoing edges for affected source vertices first, then `UNWIND + CREATE` (not MERGE) with `MATCH` on existing vertices. Projected improvement: ~15× (91s → ~6s). Incremental watch-mode still uses MERGE for small batches.
 
 ## [0.6.0] — 2026-04-15
 
