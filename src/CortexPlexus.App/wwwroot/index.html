@@ -19,10 +19,22 @@
             <button id="search-btn">Search</button>
         </div>
         <div class="toolbar-right">
+            <label class="limit-label" title="Max nodes to load">Limit
+                <select id="limit-select">
+                    <option value="100">100</option>
+                    <option value="500" selected>500</option>
+                    <option value="1000">1K</option>
+                    <option value="2000">2K</option>
+                    <option value="5000">5K</option>
+                </select>
+            </label>
             <div id="kind-filters"></div>
             <button id="fit-btn" title="Fit graph to screen">Fit</button>
         </div>
     </header>
+
+    <div id="status-banner" class="hidden"></div>
+    <div id="breadcrumb" class="hidden"><span id="breadcrumb-text"></span></div>
 
     <main id="workspace">
         <div id="cy"></div>

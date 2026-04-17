@@ -2,7 +2,8 @@ namespace CortexPlexus.Core.Models;
 
 public sealed record GraphOverview(
     IReadOnlyList<GraphNode> Nodes,
-    IReadOnlyList<GraphEdge> Edges
+    IReadOnlyList<GraphEdge> Edges,
+    int TotalMatchingNodes = 0
 );
 
 public sealed record GraphNode(

@@ -3,6 +3,8 @@
 let cy = null;
 let currentRepoId = null;
 let selectedNodeId = null;
+let focusedFqn = null; // P2b: currently focused node (null = full graph view)
+let lastTotalMatchingNodes = 0;
 
 const KIND_COLORS = {
     'class':            { color: '#4A90D9', shape: 'round-rectangle' },
@@ -52,8 +54,8 @@ function initCytoscape() {
                     'color': '#ccc',
                     'text-valign': 'bottom',
                     'text-margin-y': 4,
-                    'width': 28,
-                    'height': 28,
+                    'width': 'data(size)',
+                    'height': 'data(size)',
                     'background-color': DEFAULT_STYLE.color,
                     'border-width': 0,
                     'text-max-width': '100px',
@@ -79,6 +81,14 @@ function initCytoscape() {
                 selector: 'node.dimmed',
                 style: {
                     'opacity': 0.2,
+                }
+            },
+            {
+                selector: 'node.focus-root',
+                style: {
+                    'border-width': 4,
+                    'border-color': '#FFD700',
+                    'border-style': 'double',
                 }
             },
             {
@@ -113,6 +123,7 @@ function initCytoscape() {
     });
 
     cy.on('tap', 'node', onNodeClick);
+    cy.on('dbltap', 'node', onNodeDblClick);
     cy.on('tap', (e) => {
         if (e.target === cy) clearSelection();
     });
@@ -126,7 +137,12 @@ function bindEvents() {
     });
     document.getElementById('fit-btn').addEventListener('click', () => cy.fit(undefined, 40));
     document.getElementById('expand-btn').addEventListener('click', onExpandNeighbors);
-    document.getElementById('focus-btn').addEventListener('click', onFocusNode);
+    document.getElementById('focus-btn').addEventListener('click', () => {
+        if (selectedNodeId) enterFocusMode(selectedNodeId);
+    });
+    document.getElementById('limit-select').addEventListener('change', () => {
+        if (currentRepoId) loadGraph(currentRepoId);
+    });
 }
 
 // --- Data Loading ---
@@ -151,20 +167,31 @@ async function onRepoChange(e) {
     const repoId = e.target.value;
     if (!repoId) return;
     currentRepoId = repoId;
+    exitFocusMode();
     await loadGraph(repoId);
+}
+
+function getSelectedLimit() {
+    return parseInt(document.getElementById('limit-select').value, 10) || 500;
 }
 
 async function loadGraph(repoId) {
     cy.elements().remove();
     updateStats();
+    focusedFqn = null;
+    hideBreadcrumb();
 
+    const limit = getSelectedLimit();
     try {
-        const res = await fetch(`/api/graph/${repoId}?limit=500`);
+        const res = await fetch(`/api/graph/${repoId}?limit=${limit}`);
         const data = await res.json();
+        lastTotalMatchingNodes = data.totalMatchingNodes || data.nodes.length;
         addGraphData(data);
+        applyVisualWeight();
         runLayout();
         updateStats();
         buildKindFilters();
+        updateStatusBanner(data.nodes.length, lastTotalMatchingNodes, limit);
     } catch (err) {
         console.error('Failed to load graph:', err);
     }
@@ -173,7 +200,6 @@ async function loadGraph(repoId) {
 function addGraphData(data) {
     const existingIds = new Set(cy.nodes().map(n => n.id()));
 
-    // Add nodes
     const newNodes = [];
     for (const node of data.nodes) {
         if (!existingIds.has(node.fqn)) {
@@ -186,18 +212,17 @@ function addGraphData(data) {
                     signature: node.signature,
                     filePath: node.filePath,
                     startLine: node.startLine,
+                    size: 28,
                 }
             });
         }
     }
 
-    // Add edges
     const existingEdges = new Set(cy.edges().map(e => e.id()));
     const newEdges = [];
     for (const edge of data.edges) {
         const edgeId = `${edge.fromFqn}|${edge.type}|${edge.toFqn}`;
         if (!existingEdges.has(edgeId)) {
-            // Only add edge if both endpoints exist or will exist
             const srcExists = existingIds.has(edge.fromFqn) || newNodes.some(n => n.data.id === edge.fromFqn);
             const tgtExists = existingIds.has(edge.toFqn) || newNodes.some(n => n.data.id === edge.toFqn);
             if (srcExists && tgtExists) {
@@ -217,6 +242,25 @@ function addGraphData(data) {
     cy.add([...newNodes, ...newEdges]);
 }
 
+function applyVisualWeight() {
+    const nodes = cy.nodes();
+    if (nodes.length === 0) return;
+
+    let maxDeg = 1;
+    nodes.forEach(n => {
+        const deg = n.degree(false);
+        if (deg > maxDeg) maxDeg = deg;
+    });
+
+    const minSize = 20;
+    const maxSize = 60;
+    nodes.forEach(n => {
+        const deg = n.degree(false);
+        const size = minSize + (deg / maxDeg) * (maxSize - minSize);
+        n.data('size', Math.round(size));
+    });
+}
+
 function runLayout() {
     cy.layout({
         name: 'cose',
@@ -232,13 +276,46 @@ function runLayout() {
     }).run();
 }
 
+// --- Status Banner (P1) ---
+
+function updateStatusBanner(shown, total, limit) {
+    const banner = document.getElementById('status-banner');
+    if (total <= 0) {
+        banner.classList.add('hidden');
+        return;
+    }
+
+    banner.classList.remove('hidden');
+    const isTruncated = shown < total;
+
+    if (focusedFqn) {
+        banner.textContent = `Focus mode: ${shown} nodes around selected symbol.`;
+        banner.classList.remove('truncated');
+    } else if (isTruncated) {
+        const kindsInfo = getKindFilterInfo();
+        banner.textContent = `Showing ${shown} of ${total.toLocaleString()} matching nodes${kindsInfo}. Use the limit selector or check more kinds to see more.`;
+        banner.classList.add('truncated');
+    } else {
+        banner.textContent = `Showing all ${total.toLocaleString()} matching nodes.`;
+        banner.classList.remove('truncated');
+    }
+}
+
+function getKindFilterInfo() {
+    const checks = document.querySelectorAll('#kind-filters input[type="checkbox"]');
+    if (checks.length === 0) return '';
+    let checked = 0;
+    checks.forEach(cb => { if (cb.checked) checked++; });
+    if (checked === checks.length) return '';
+    return ` (${checked} of ${checks.length} kinds checked)`;
+}
+
 // --- Node Interaction ---
 
 function onNodeClick(e) {
     const node = e.target;
     selectedNodeId = node.id();
 
-    // Highlight node and its neighborhood
     cy.elements().removeClass('highlighted dimmed');
     const neighborhood = node.neighborhood().add(node);
     cy.elements().not(neighborhood).addClass('dimmed');
@@ -246,6 +323,11 @@ function onNodeClick(e) {
     node.select();
 
     showNodeDetail(node.data());
+}
+
+function onNodeDblClick(e) {
+    const node = e.target;
+    enterFocusMode(node.id());
 }
 
 function clearSelection() {
@@ -267,7 +349,6 @@ function showNodeDetail(data) {
     document.getElementById('detail-line').textContent = data.startLine || '-';
     document.getElementById('detail-sig').textContent = data.signature || '-';
 
-    // List connections
     const edgeList = document.getElementById('detail-edges');
     edgeList.innerHTML = '';
     const node = cy.getElementById(data.id);
@@ -277,7 +358,11 @@ function showNodeDetail(data) {
         const isSource = edge.source().id() === data.id;
         const other = isSource ? edge.target() : edge.source();
         const direction = isSource ? '\u2192' : '\u2190';
-        li.innerHTML = `<span class="edge-type">${edge.data('type')}</span> ${direction} ${other.data('label')}`;
+        const typeSpan = document.createElement('span');
+        typeSpan.className = 'edge-type';
+        typeSpan.textContent = edge.data('type');
+        li.appendChild(typeSpan);
+        li.appendChild(document.createTextNode(` ${direction} ${other.data('label')}`));
         li.addEventListener('click', () => {
             other.emit('tap');
             cy.animate({ center: { eles: other }, duration: 300 });
@@ -296,7 +381,6 @@ async function onExpandNeighbors() {
         const countAfter = cy.nodes().length;
 
         if (countAfter > countBefore) {
-            // Re-layout only new nodes around the selected node
             const center = cy.getElementById(selectedNodeId);
             const pos = center.position();
             cy.nodes().forEach(n => {
@@ -307,6 +391,7 @@ async function onExpandNeighbors() {
                     });
                 }
             });
+            applyVisualWeight();
             runLayout();
         }
         updateStats();
@@ -315,10 +400,62 @@ async function onExpandNeighbors() {
     }
 }
 
-function onFocusNode() {
-    if (!selectedNodeId) return;
-    const node = cy.getElementById(selectedNodeId);
-    cy.animate({ center: { eles: node }, zoom: 2, duration: 500 });
+// --- Focus Mode (P2b) ---
+
+async function enterFocusMode(fqn) {
+    focusedFqn = fqn;
+    cy.elements().remove();
+    clearSelection();
+
+    try {
+        const res = await fetch(`/api/graph/node?fqn=${encodeURIComponent(fqn)}&depth=2`);
+        const data = await res.json();
+        addGraphData(data);
+        applyVisualWeight();
+        runLayout();
+        updateStats();
+
+        const rootNode = cy.getElementById(fqn);
+        if (rootNode.length) rootNode.addClass('focus-root');
+
+        const shortName = fqn.split('.').pop() || fqn;
+        showBreadcrumb(shortName, fqn);
+        updateStatusBanner(data.nodes.length, data.nodes.length, 0);
+    } catch (err) {
+        console.error('Failed to enter focus mode:', err);
+    }
+}
+
+function exitFocusMode() {
+    focusedFqn = null;
+    hideBreadcrumb();
+}
+
+function showBreadcrumb(name, fqn) {
+    const bc = document.getElementById('breadcrumb');
+    const text = document.getElementById('breadcrumb-text');
+    bc.classList.remove('hidden');
+
+    text.innerHTML = '';
+    const allLink = document.createElement('a');
+    allLink.textContent = 'All';
+    allLink.addEventListener('click', () => {
+        exitFocusMode();
+        if (currentRepoId) loadGraph(currentRepoId);
+    });
+    text.appendChild(allLink);
+
+    const arrow = document.createTextNode(' \u2192 ');
+    text.appendChild(arrow);
+
+    const current = document.createElement('span');
+    current.textContent = name;
+    current.title = fqn;
+    text.appendChild(current);
+}
+
+function hideBreadcrumb() {
+    document.getElementById('breadcrumb').classList.add('hidden');
 }
 
 // --- Search ---
@@ -336,7 +473,6 @@ async function onSearch() {
 
         if (results.length === 0) return;
 
-        // Highlight matching nodes in graph, or add them
         cy.elements().removeClass('highlighted dimmed');
         const matchFqns = new Set(results.map(r => r.fqn));
 
@@ -350,7 +486,6 @@ async function onSearch() {
             }
         });
 
-        // If matches found, fit to them
         const highlighted = cy.nodes('.highlighted');
         if (highlighted.length > 0) {
             cy.animate({ fit: { eles: highlighted, padding: 60 }, duration: 500 });
@@ -394,6 +529,9 @@ function onKindFilterChange() {
             n.style('display', 'none');
         }
     });
+
+    const visibleNodes = cy.nodes().filter(n => n.style('display') !== 'none').length;
+    updateStatusBanner(visibleNodes, lastTotalMatchingNodes, getSelectedLimit());
 }
 
 // --- Stats ---

@@ -96,6 +96,53 @@ button {
 }
 button:hover { background: var(--accent); color: #fff; }
 
+/* Limit selector */
+.limit-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.limit-label select {
+    min-width: 60px;
+    padding: 3px 6px;
+    font-size: 11px;
+}
+
+/* Status banner */
+#status-banner {
+    padding: 4px 16px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+#status-banner.truncated { color: #F39C12; }
+
+/* Breadcrumb */
+#breadcrumb {
+    padding: 4px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#breadcrumb a {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+}
+#breadcrumb a:hover { text-decoration: underline; }
+
 /* Main workspace */
 #workspace {
     flex: 1;

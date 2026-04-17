@@ -1177,6 +1177,17 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         // Step 1: Fetch nodes from relational table (faster than Cypher for bulk reads, has kind column)
         await using var conn = await dataSource.OpenConnectionAsync(ct);
 
+        var countSql = kindFilter is { Count: > 0 }
+            ? "SELECT COUNT(*) FROM public.code_symbols WHERE repo_id = @repoId AND kind = ANY(@kinds)"
+            : "SELECT COUNT(*) FROM public.code_symbols WHERE repo_id = @repoId";
+
+        await using var countCmd = conn.CreateCommand();
+        countCmd.CommandText = countSql;
+        countCmd.Parameters.AddWithValue("repoId", repoId);
+        if (kindFilter is { Count: > 0 })
+            countCmd.Parameters.AddWithValue("kinds", kindFilter.ToArray());
+        var totalMatchingNodes = Convert.ToInt32(await countCmd.ExecuteScalarAsync(ct));
+
         var nodesSql = kindFilter is { Count: > 0 }
             ? "SELECT fqn, name, kind, signature, file_path, start_line FROM public.code_symbols WHERE repo_id = @repoId AND kind = ANY(@kinds) ORDER BY kind, name LIMIT @limit"
             : "SELECT fqn, name, kind, signature, file_path, start_line FROM public.code_symbols WHERE repo_id = @repoId ORDER BY kind, name LIMIT @limit";
@@ -1207,7 +1218,7 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         await nodesReader.CloseAsync();
 
         if (nodes.Count == 0)
-            return new GraphOverview(nodes, []);
+            return new GraphOverview(nodes, [], totalMatchingNodes);
 
         // Step 2: Fetch edges from AGE graph (relationships only exist in graph)
         await SetAgePath(conn, ct);
@@ -1240,7 +1251,7 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
                 edges.Add(new GraphEdge(fromFqn, toFqn, relType));
         }
 
-        return new GraphOverview(nodes, edges);
+        return new GraphOverview(nodes, edges, totalMatchingNodes);
     }
 
     public async Task<GraphOverview> GetNodeNeighborsAsync(
