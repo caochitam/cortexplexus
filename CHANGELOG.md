@@ -12,7 +12,20 @@ Versioning notes:
 
 ## [Unreleased]
 
-_No pending changes._
+### Added (v0.8.0 Wave 1 — foundation)
+
+- **NEW [`docs/MEMORY-SYSTEM.md`](docs/MEMORY-SYSTEM.md)** — user-facing spec for the opt-in agent memory system: scopes (session/project/global), topics, Weibull decay, enabling via config.
+- **NEW [`docs/decisions/010-memory-storage-reuse-postgres.md`](docs/decisions/010-memory-storage-reuse-postgres.md)** — ADR: reuse existing Postgres DB for memory storage; rejected Redis / SQLite / dedicated-service alternatives.
+- **NEW [`docs/decisions/011-memory-scope-model.md`](docs/decisions/011-memory-scope-model.md)** — ADR: three-tier scope (session/project/global); rejected flat/two-tier/five-tier/per-actor alternatives.
+- **NEW [`docs/decisions/013-memory-opt-in-default.md`](docs/decisions/013-memory-opt-in-default.md)** — ADR: memory is disabled by default; opt-in via `Memory__Enabled=true` or `appsettings.json`. Rationale: trust + upgrade safety.
+- **NEW `CortexPlexus.Memory` project** — `AgentMemoryStore` with save / recall (filter path) / list / forget / count, backed by the `agent_memories` table.
+- **NEW `CortexPlexus.Core.Models.AgentMemory`** + `MemoryScope` + `MemoryTopic` constants (shared with the MCP tool layer in Wave 2).
+- **NEW `CortexPlexus.Core.Abstractions.IAgentMemoryStore`** interface.
+- **NEW `CortexPlexus.Memory.MemoryOptions`** — `Enabled` (default `false`), `ReapIntervalHours`, `MaxMemoriesPerScope`, `DefaultImportance`.
+- **NEW schema migration** — `agent_memories` table with CHECK constraints (scope enum, scope_id-required-unless-global, importance 0..1, content 1..4000 chars), HNSW on `embedding vector(768)`, GIN on `related_fqns`, B-tree on `(scope, scope_id)`. Idempotent; runs on startup after the existing `IGraphStore.InitializeSchemaAsync()`.
+- **NEW `CortexPlexus.Memory.Tests`** — 17 integration tests against a real pgvector container covering schema idempotency, scope validation, filter queries, access-count bumping on recall, forget semantics.
+
+Wave 1 is **foundation only** — the store exists and the gate defaults to disabled, but no MCP tools are wired yet. Wave 2 (decay + 4 MCP tools) lands next. See [`docs/PLAN-v0.8.0.md`](docs/PLAN-v0.8.0.md).
 
 ## [0.7.1] — 2026-04-17
 

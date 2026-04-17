@@ -2,6 +2,7 @@ using CortexPlexus.Core.Abstractions;
 using CortexPlexus.Core.Services;
 using CortexPlexus.Embedding;
 using CortexPlexus.Graph;
+using CortexPlexus.Memory;
 using CortexPlexus.Parsing;
 using CortexPlexus.Search;
 using CortexPlexus.App.Export;
@@ -70,6 +71,8 @@ async Task RunInit(string[] args)
     using var services = BuildServices(args);
     var graphStore = services.GetRequiredService<IGraphStore>();
     await graphStore.InitializeSchemaAsync();
+    var memoryStore = services.GetRequiredService<IAgentMemoryStore>();
+    await memoryStore.InitializeSchemaAsync();
     Log.Information("Schema initialized successfully.");
 }
 
@@ -119,6 +122,8 @@ async Task RunServe(string[] args)
     {
         var graphStore = scope.ServiceProvider.GetRequiredService<IGraphStore>();
         await graphStore.InitializeSchemaAsync();
+        var memoryStore = scope.ServiceProvider.GetRequiredService<IAgentMemoryStore>();
+        await memoryStore.InitializeSchemaAsync();
     }
 
     // Web UI: static files + REST API
@@ -236,6 +241,21 @@ void ConfigureServices(IServiceCollection services, string[] args)
     services.AddCortexPlexusGraph(connectionString);
     services.AddCortexPlexusParsing();
     services.AddCortexPlexusSearch();
+
+    // Memory system (opt-in; default disabled — see ADR-013, docs/MEMORY-SYSTEM.md)
+    services.AddCortexPlexusMemory(options =>
+    {
+        options.Enabled = string.Equals(
+            Environment.GetEnvironmentVariable("Memory__Enabled"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+        if (int.TryParse(Environment.GetEnvironmentVariable("Memory__ReapIntervalHours"), out var reap))
+            options.ReapIntervalHours = reap;
+        if (int.TryParse(Environment.GetEnvironmentVariable("Memory__MaxMemoriesPerScope"), out var max))
+            options.MaxMemoriesPerScope = max;
+        if (double.TryParse(Environment.GetEnvironmentVariable("Memory__DefaultImportance"), out var imp))
+            options.DefaultImportance = imp;
+    });
 
     var ollamaBaseUrl = Environment.GetEnvironmentVariable("Embedding__OllamaBaseUrl") ?? "http://localhost:11434";
     var ollamaModel = Environment.GetEnvironmentVariable("Embedding__OllamaModel") ?? "nomic-embed-text";

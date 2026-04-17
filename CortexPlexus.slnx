@@ -5,6 +5,7 @@
     <Project Path="src/CortexPlexus.Core/CortexPlexus.Core.csproj" />
     <Project Path="src/CortexPlexus.Embedding/CortexPlexus.Embedding.csproj" />
     <Project Path="src/CortexPlexus.Graph/CortexPlexus.Graph.csproj" />
+    <Project Path="src/CortexPlexus.Memory/CortexPlexus.Memory.csproj" />
     <Project Path="src/CortexPlexus.Parsing/CortexPlexus.Parsing.csproj" />
     <Project Path="src/CortexPlexus.Search/CortexPlexus.Search.csproj" />
   </Folder>
@@ -14,6 +15,7 @@
     <Project Path="tests/CortexPlexus.Search.Tests/CortexPlexus.Search.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Integration.Tests/CortexPlexus.Integration.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Graph.Tests/CortexPlexus.Graph.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Memory.Tests/CortexPlexus.Memory.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Mcp.Tests/CortexPlexus.Mcp.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Api.Tests/CortexPlexus.Api.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Embedding.Tests/CortexPlexus.Embedding.Tests.csproj" />

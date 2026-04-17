@@ -12,6 +12,7 @@
     <ProjectReference Include="..\CortexPlexus.Core\CortexPlexus.Core.csproj" />
     <ProjectReference Include="..\CortexPlexus.Parsing\CortexPlexus.Parsing.csproj" />
     <ProjectReference Include="..\CortexPlexus.Graph\CortexPlexus.Graph.csproj" />
+    <ProjectReference Include="..\CortexPlexus.Memory\CortexPlexus.Memory.csproj" />
     <ProjectReference Include="..\CortexPlexus.Search\CortexPlexus.Search.csproj" />
     <ProjectReference Include="..\CortexPlexus.Embedding\CortexPlexus.Embedding.csproj" />
   </ItemGroup>
