@@ -27,6 +27,23 @@ Versioning notes:
 
 Wave 1 is **foundation only** — the store exists and the gate defaults to disabled, but no MCP tools are wired yet. Wave 2 (decay + 4 MCP tools) lands next. See [`docs/PLAN-v0.8.0.md`](docs/PLAN-v0.8.0.md).
 
+### Added (v0.8.0 Wave 2 — decay + MCP surface)
+
+- **NEW [`docs/decisions/012-memory-decay-weibull.md`](docs/decisions/012-memory-decay-weibull.md)** — ADR: Weibull decay (shape k=1.5) with per-topic λ (preference 365d, pattern/decision 180d, bug 90d, todo 30d, note 60d). Auto-forget at score < 0.1.
+- **NEW `CortexPlexus.Memory.MemoryScoring`** — pure C# `Score` function + equivalent SQL expression (`ScoreSqlExpression`) inlined in `RecallAsync` and `ReapAsync` so ranking and pruning share one source of truth.
+- **`IAgentMemoryStore.ReapAsync`** + `AgentMemoryStore.ReapAsync()` — deletes rows whose decay score is below the forget threshold. Single SQL `DELETE`, idempotent.
+- **`RecallAsync` now ranks by decay × cosine similarity**. Rows below the forget threshold are filtered out even before the reaper runs. `ListAsync` still returns everything for audit.
+- **NEW `CortexPlexus.Memory.MemoryReaper`** — `BackgroundService` that scans on an interval (`ReapIntervalHours`, default 24). Short-circuits when `Memory.Enabled=false`. Registered unconditionally; safe when disabled.
+- **NEW 4 MCP tools** in `src/CortexPlexus.App/Mcp/Tools/MemoryTools.cs`:
+  - `save_memory` — PII scan via `ISecretsScanner`, validates scope / scope_id / topic / importance, calls embedding service, persists. Returns JSON with the new memory's ID.
+  - `recall_memory` — computes query embedding, combines with decay score for ranking. Bumps access count on returned rows.
+  - `list_memories` — filter-only audit surface. Includes near-forgotten rows.
+  - `forget_memory` — explicit delete by UUID.
+  All four gate on `Memory.Enabled`; when disabled they return a clear "enable via config" message (ADR-013).
+- **`list_repositories` now advertises memory state** — appends `Memory: enabled (N items).` or `Memory: disabled. Enable via Memory__Enabled=true ...` so users / agents see the feature state without having to probe.
+- **`get_help` tool reference** updated: 26 → 30 tools. New "AGENT MEMORY (opt-in)" section lists the 4 tools with one-line usage examples.
+- **Tests**: 19 `MemoryScoringTests` (pure, no DB — locks in decay formula), 7 `MemoryDecayTests` (integration: reap + decay-filtered recall), 19 `MemoryToolsTests` (NSubstitute mocks exercising every gate + validation branch). All 769 tests passing.
+
 ## [0.7.1] — 2026-04-17
 
 ### Fixed

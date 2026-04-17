@@ -1,5 +1,7 @@
 using CortexPlexus.Core.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace CortexPlexus.Memory;
 
@@ -9,11 +11,10 @@ namespace CortexPlexus.Memory;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the agent memory store and options. Requires that
-    /// <see cref="Npgsql.NpgsqlDataSource"/> is already registered (done by
-    /// <c>AddCortexPlexusGraph</c> — we share the same DataSource). Options
-    /// default to disabled; callers override via <paramref name="configure"/>
-    /// or environment variables bound in <c>Program.cs</c>.
+    /// Registers the agent memory store, options, and the background reaper.
+    /// Requires <see cref="Npgsql.NpgsqlDataSource"/> to be registered already
+    /// (done by <c>AddCortexPlexusGraph</c> — we share the same DataSource).
+    /// Options default to disabled; callers override via <paramref name="configure"/>.
     /// </summary>
     public static IServiceCollection AddCortexPlexusMemory(
         this IServiceCollection services,
@@ -28,6 +29,13 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddScoped<IAgentMemoryStore, AgentMemoryStore>();
+
+        // The reaper is registered whether or not the feature is enabled — it
+        // short-circuits on startup when disabled, so no background work happens.
+        // TryAddEnumerable keeps this registration safe against double-calls.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IHostedService, MemoryReaper>());
+
         return services;
     }
 }

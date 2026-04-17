@@ -52,4 +52,10 @@ public interface IAgentMemoryStore
 
     /// <summary>Total row count in the store (used by Health reporting).</summary>
     Task<long> CountAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Delete all memories whose decay-weighted score is below the forget threshold.
+    /// Called periodically by <c>MemoryReaper</c>. Returns the number of rows deleted.
+    /// </summary>
+    Task<int> ReapAsync(CancellationToken ct = default);
 }

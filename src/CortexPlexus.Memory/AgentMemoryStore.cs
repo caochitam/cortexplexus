@@ -99,21 +99,45 @@ public sealed class AgentMemoryStore(
     {
         limit = Math.Clamp(limit, 1, 50);
 
-        var sql = BuildFilterSql(scope, scopeId, topic, relatedFqn, limit, orderByRecency: true);
+        // Always filter forgotten rows out even if the reaper hasn't run yet.
+        var extraWhere = $"{MemoryScoring.ScoreSqlExpression} >= {MemoryScoring.ForgetThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+        // When a query embedding is supplied, combine decay with cosine similarity.
+        // When not, rank by decay alone. Rows without an embedding still appear via
+        // the filter query; they just contribute no semantic signal.
+        string orderClause;
+        if (queryEmbedding is not null)
+        {
+            orderClause = $"ORDER BY ({MemoryScoring.ScoreSqlExpression}) * " +
+                          "COALESCE((1.0 - (embedding <=> @q)), 0.5) DESC NULLS LAST";
+        }
+        else
+        {
+            orderClause = $"ORDER BY ({MemoryScoring.ScoreSqlExpression}) DESC";
+        }
+
+        var sql = BuildFilterSql(
+            scope, scopeId, topic, relatedFqn, limit,
+            extraWhere: extraWhere,
+            orderClause: orderClause);
 
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         BindFilterParameters(cmd, scope, scopeId, topic, relatedFqn);
+        if (queryEmbedding is not null)
+            cmd.Parameters.Add(new NpgsqlParameter("q", new Vector(queryEmbedding)));
 
         var results = new List<AgentMemoryResult>();
+        var now = DateTimeOffset.UtcNow;
         await using (var reader = await cmd.ExecuteReaderAsync(ct))
         {
             while (await reader.ReadAsync(ct))
             {
                 var memory = ReadMemory(reader);
-                // Wave 1: score = importance (no decay term yet — Wave 2 adds Weibull).
-                results.Add(new AgentMemoryResult(memory, memory.Importance));
+                // Client-side score mirrors the SQL expression (no cosine term without a query).
+                var score = MemoryScoring.Score(memory, now);
+                results.Add(new AgentMemoryResult(memory, score));
             }
         }
 
@@ -133,7 +157,12 @@ public sealed class AgentMemoryStore(
     {
         limit = Math.Clamp(limit, 1, 500);
 
-        var sql = BuildFilterSql(scope, scopeId, topic, relatedFqn: null, limit, orderByRecency: true);
+        // list_memories shows everything the user has saved — including near-forgotten
+        // rows — so callers can audit / forget explicitly. No decay filter here.
+        var sql = BuildFilterSql(
+            scope, scopeId, topic, relatedFqn: null, limit,
+            extraWhere: null,
+            orderClause: "ORDER BY importance DESC, last_accessed_at DESC");
 
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
@@ -166,13 +195,30 @@ public sealed class AgentMemoryStore(
         return Convert.ToInt64(result);
     }
 
+    public async Task<int> ReapAsync(CancellationToken ct = default)
+    {
+        var threshold = MemoryScoring.ForgetThreshold
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            DELETE FROM agent_memories
+            WHERE {MemoryScoring.ScoreSqlExpression} < {threshold}
+            """;
+        var rows = await cmd.ExecuteNonQueryAsync(ct);
+        if (rows > 0)
+            logger.LogInformation("MemoryReaper removed {Rows} memories below forget threshold", rows);
+        return rows;
+    }
+
     private static string BuildFilterSql(
         string? scope,
         string? scopeId,
         string? topic,
         string? relatedFqn,
         int limit,
-        bool orderByRecency)
+        string? extraWhere,
+        string orderClause)
     {
         var where = new List<string>();
         if (!string.IsNullOrWhiteSpace(scope) && scope != "all")
@@ -183,11 +229,10 @@ public sealed class AgentMemoryStore(
             where.Add("topic = @topic");
         if (!string.IsNullOrWhiteSpace(relatedFqn))
             where.Add("@related_fqn = ANY(related_fqns)");
+        if (!string.IsNullOrWhiteSpace(extraWhere))
+            where.Add(extraWhere);
 
         var whereClause = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
-        var orderClause = orderByRecency
-            ? "ORDER BY importance DESC, last_accessed_at DESC"
-            : "ORDER BY created_at DESC";
 
         return $"""
             SELECT id, content, scope, scope_id, topic, importance, related_fqns,

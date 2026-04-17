@@ -11,4 +11,5 @@
 | [009](009-age-edge-upsert-scaling.md) | AGE edge upsert: delete+CREATE for bulk, MERGE for incremental | Accepted | 2026-04-15 |
 | [010](010-memory-storage-reuse-postgres.md) | Memory storage reuses existing PostgreSQL | Accepted | 2026-04-17 |
 | [011](011-memory-scope-model.md) | Memory scope: session / project / global | Accepted | 2026-04-17 |
+| [012](012-memory-decay-weibull.md) | Memory decay: Weibull curve (k=1.5) with per-topic λ | Accepted | 2026-04-17 |
 | [013](013-memory-opt-in-default.md) | Memory system opt-in, default disabled | Accepted | 2026-04-17 |

@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CortexPlexus.Core\CortexPlexus.Core.csproj" />
+    <ProjectReference Include="..\..\src\CortexPlexus.Memory\CortexPlexus.Memory.csproj" />
     <ProjectReference Include="..\..\src\CortexPlexus.Search\CortexPlexus.Search.csproj" />
     <ProjectReference Include="..\..\src\CortexPlexus.App\CortexPlexus.App.csproj" />
   </ItemGroup>

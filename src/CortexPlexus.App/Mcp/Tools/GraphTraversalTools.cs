@@ -337,7 +337,9 @@ public sealed class GraphTraversalTools
     [McpServerTool, Description("List all indexed repositories with their names, last-indexed timestamp, and persistence health (symbol count + embedding coverage). Check the 'health' line before assuming a repo is queryable — a registered repo with 0 symbols or missing embeddings means the last indexing run did not fully commit.")]
     public static async Task<string> ListRepositories(
         IRepositoryStore repoStore = default!,
-        NpgsqlDataSource? dataSource = null)
+        NpgsqlDataSource? dataSource = null,
+        IAgentMemoryStore? memoryStore = null,
+        Microsoft.Extensions.Options.IOptions<CortexPlexus.Memory.MemoryOptions>? memoryOptions = null)
     {
         var repos = await repoStore.ListAsync();
         if (repos.Count == 0)
@@ -417,6 +419,32 @@ public sealed class GraphTraversalTools
                 sb.AppendLine($"  Note: {g.Stale.Count} stale duplicate(s) hidden: {stalePaths}");
             }
             sb.AppendLine();
+        }
+
+        // Memory feature state (ADR-013): off by default; on when enabled.
+        // Rendered once per ListRepositories call so users / agents can see whether
+        // Save/Recall/List/Forget memory tools will work.
+        if (memoryOptions is not null)
+        {
+            if (memoryOptions.Value.Enabled && memoryStore is not null)
+            {
+                try
+                {
+                    var count = await memoryStore.CountAsync();
+                    sb.AppendLine($"Memory: enabled ({count} items).");
+                    sb.AppendLine();
+                }
+                catch
+                {
+                    sb.AppendLine("Memory: enabled (count unavailable).");
+                    sb.AppendLine();
+                }
+            }
+            else
+            {
+                sb.AppendLine("Memory: disabled. Enable via Memory__Enabled=true (see docs/MEMORY-SYSTEM.md).");
+                sb.AppendLine();
+            }
         }
 
         sb.AppendLine("Tip: Use the 'repository' parameter in SearchCode/SemanticSearch/GetDiRegistrations/GetApiEndpoints to scope results to a specific project.");

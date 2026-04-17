@@ -1,0 +1,291 @@
+using CortexPlexus.App.Mcp.Tools;
+using CortexPlexus.Core.Abstractions;
+using CortexPlexus.Core.Models;
+using CortexPlexus.Memory;
+using Microsoft.Extensions.Options;
+using NSubstitute;
+
+namespace CortexPlexus.Mcp.Tests;
+
+/// <summary>
+/// Unit tests for the 4 MCP memory tools. All use NSubstitute — no real DB. The
+/// integration side is covered by CortexPlexus.Memory.Tests.
+/// </summary>
+public sealed class MemoryToolsTests
+{
+    private static IOptions<MemoryOptions> Opts(bool enabled) =>
+        Options.Create(new MemoryOptions { Enabled = enabled });
+
+    private static IAgentMemoryStore BuildStore() => Substitute.For<IAgentMemoryStore>();
+
+    private static IEmbeddingService BuildEmbeddings()
+    {
+        var e = Substitute.For<IEmbeddingService>();
+        e.EmbedAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new float[768]));
+        return e;
+    }
+
+    private static ISecretsScanner BuildScanner(bool containsSecrets = false)
+    {
+        var s = Substitute.For<ISecretsScanner>();
+        s.ContainsSecrets(Arg.Any<string>()).Returns(containsSecrets);
+        s.Sanitize(Arg.Any<string>()).Returns(ci => ci.Arg<string>());
+        return s;
+    }
+
+    [Fact]
+    public async Task SaveMemory_Disabled_ReturnsDisabledMessage()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "x", scope: MemoryScope.Global,
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(false));
+
+        Assert.Contains("Memory is disabled", result);
+        Assert.Contains("Memory__Enabled=true", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_MissingContent_ReturnsError()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: null, scope: MemoryScope.Global,
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(true));
+
+        Assert.Contains("'content' is required", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_MissingScope_ReturnsError()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "x", scope: null,
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(true));
+
+        Assert.Contains("'scope' is required", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_InvalidScope_ReturnsError()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "x", scope: "bogus",
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(true));
+
+        Assert.Contains("invalid scope", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_ProjectWithoutScopeId_ReturnsError()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "x", scope: MemoryScope.Project, scopeId: null,
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(true));
+
+        Assert.Contains("requires a scope_id", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_ContentWithSecrets_Rejected()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "api_key=abc123",
+            scope: MemoryScope.Global,
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(containsSecrets: true),
+            options: Opts(true));
+
+        Assert.Contains("secrets or credentials", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_InvalidTopic_ReturnsError()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "x", scope: MemoryScope.Global, topic: "unknown",
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(true));
+
+        Assert.Contains("invalid topic", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_ImportanceOutOfRange_ReturnsError()
+    {
+        var result = await MemoryTools.SaveMemory(
+            content: "x", scope: MemoryScope.Global, importance: 1.5,
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), options: Opts(true));
+
+        Assert.Contains("importance must be in [0, 1]", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_HappyPath_ReturnsJsonWithId()
+    {
+        var store = BuildStore();
+        var id = Guid.NewGuid();
+        store.SaveAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<double>(),
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<float[]?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new AgentMemory(
+                Id: id, Content: "x", Scope: MemoryScope.Global, ScopeId: null,
+                Topic: MemoryTopic.Preference, Importance: 0.5,
+                RelatedFqns: Array.Empty<string>(),
+                CreatedAt: DateTimeOffset.UtcNow,
+                LastAccessedAt: DateTimeOffset.UtcNow,
+                AccessCount: 0)));
+
+        var result = await MemoryTools.SaveMemory(
+            content: "User prefers async",
+            scope: MemoryScope.Global,
+            topic: MemoryTopic.Preference,
+            store: store,
+            embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(),
+            options: Opts(true));
+
+        Assert.Contains(id.ToString(), result);
+        Assert.Contains("\"stored\": true", result);
+    }
+
+    [Fact]
+    public async Task RecallMemory_Disabled_ReturnsDisabled()
+    {
+        var result = await MemoryTools.RecallMemory(
+            query: "x",
+            store: BuildStore(),
+            embeddings: BuildEmbeddings(),
+            options: Opts(false));
+
+        Assert.Contains("Memory is disabled", result);
+    }
+
+    [Fact]
+    public async Task RecallMemory_MissingQuery_ReturnsError()
+    {
+        var result = await MemoryTools.RecallMemory(
+            query: null,
+            store: BuildStore(),
+            embeddings: BuildEmbeddings(),
+            options: Opts(true));
+
+        Assert.Contains("'query' is required", result);
+    }
+
+    [Fact]
+    public async Task RecallMemory_NoHits_ReturnsFriendlyMessage()
+    {
+        var store = BuildStore();
+        store.RecallAsync(
+                Arg.Any<float[]?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<AgentMemoryResult>>(
+                Array.Empty<AgentMemoryResult>()));
+
+        var result = await MemoryTools.RecallMemory(
+            query: "nothing", store: store,
+            embeddings: BuildEmbeddings(), options: Opts(true));
+
+        Assert.Contains("No memories matched", result);
+    }
+
+    [Fact]
+    public async Task RecallMemory_ReturnsHitsInJson()
+    {
+        var store = BuildStore();
+        var id = Guid.NewGuid();
+        store.RecallAsync(
+                Arg.Any<float[]?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<AgentMemoryResult>>(
+                [new AgentMemoryResult(new AgentMemory(
+                    Id: id, Content: "pref", Scope: MemoryScope.Global, ScopeId: null,
+                    Topic: MemoryTopic.Preference, Importance: 0.9,
+                    RelatedFqns: Array.Empty<string>(),
+                    CreatedAt: DateTimeOffset.UtcNow,
+                    LastAccessedAt: DateTimeOffset.UtcNow,
+                    AccessCount: 3), Score: 0.9)]));
+
+        var result = await MemoryTools.RecallMemory(
+            query: "preferences", store: store,
+            embeddings: BuildEmbeddings(), options: Opts(true));
+
+        Assert.Contains(id.ToString(), result);
+        Assert.Contains("\"count\": 1", result);
+    }
+
+    [Fact]
+    public async Task ListMemories_Disabled_ReturnsDisabled()
+    {
+        var result = await MemoryTools.ListMemories(
+            store: BuildStore(), options: Opts(false));
+        Assert.Contains("Memory is disabled", result);
+    }
+
+    [Fact]
+    public async Task ForgetMemory_Disabled_ReturnsDisabled()
+    {
+        var result = await MemoryTools.ForgetMemory(
+            id: Guid.NewGuid().ToString(),
+            store: BuildStore(),
+            options: Opts(false));
+        Assert.Contains("Memory is disabled", result);
+    }
+
+    [Fact]
+    public async Task ForgetMemory_InvalidUuid_ReturnsError()
+    {
+        var result = await MemoryTools.ForgetMemory(
+            id: "not-a-uuid",
+            store: BuildStore(),
+            options: Opts(true));
+        Assert.Contains("invalid UUID", result);
+    }
+
+    [Fact]
+    public async Task ForgetMemory_MissingId_ReturnsError()
+    {
+        var result = await MemoryTools.ForgetMemory(
+            id: null, store: BuildStore(), options: Opts(true));
+        Assert.Contains("'id' is required", result);
+    }
+
+    [Fact]
+    public async Task ForgetMemory_Success_ReturnsForgottenTrue()
+    {
+        var store = BuildStore();
+        store.ForgetAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var result = await MemoryTools.ForgetMemory(
+            id: Guid.NewGuid().ToString(),
+            store: store, options: Opts(true));
+
+        Assert.Contains("\"forgotten\": true", result);
+    }
+
+    [Fact]
+    public async Task ForgetMemory_NotFound_ReturnsForgottenFalse()
+    {
+        var store = BuildStore();
+        store.ForgetAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(false));
+
+        var result = await MemoryTools.ForgetMemory(
+            id: Guid.NewGuid().ToString(),
+            store: store, options: Opts(true));
+
+        Assert.Contains("\"forgotten\": false", result);
+        Assert.Contains("not_found", result);
+    }
+}

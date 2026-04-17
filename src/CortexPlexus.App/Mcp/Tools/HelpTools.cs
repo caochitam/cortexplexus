@@ -106,7 +106,7 @@ public sealed class HelpTools
         """;
 
     private const string ToolReference = """
-        # Tool Reference (26 tools)
+        # Tool Reference (30 tools)
 
         ## INDEXING (do this first)
         - ActivateAgent(projectPath, projectName?)
@@ -172,6 +172,18 @@ public sealed class HelpTools
         ## OVERVIEW
         - ListRepositories()    — All indexed repos with last index time
         - GetHelp(topic?)       — This guide (topics: quick-start, tools, indexing, strategies, when-to-use)
+
+        ## AGENT MEMORY (opt-in — requires Memory__Enabled=true)
+        Semantic, scoped, auto-decaying memory store. See docs/MEMORY-SYSTEM.md.
+        - SaveMemory(content, scope, scopeId?, topic?, importance?, relatedFqns?)
+          Store a memory. Scope: session|project|global. Topic shapes decay.
+          Example: SaveMemory("Team prefers async/await", scope: "project", scopeId: "<repoId>", topic: "preference")
+        - RecallMemory(query, scope?, scopeId?, topic?, relatedFqn?, limit?)
+          Semantic recall with decay-weighted ranking.
+          Example: RecallMemory("auth patterns", scope: "project", scopeId: "<repoId>")
+        - ListMemories(scope?, scopeId?, topic?, limit?)
+          Audit all saved memories (no semantic search; includes near-forgotten).
+        - ForgetMemory(id)  — Delete a specific memory by UUID.
         """;
 
     private const string IndexingGuide = """
