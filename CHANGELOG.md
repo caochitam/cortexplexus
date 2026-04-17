@@ -14,6 +14,16 @@ Versioning notes:
 
 _No pending changes._
 
+## [0.7.1] — 2026-04-17
+
+### Fixed
+
+- **Locale-dependent percent format in Health label** — `FormatHealthLabel` used `:P0` which renders `"100 %"` (with non-breaking space U+00A0) on certain OS locales, breaking substring matches in tests and downstream consumers. Now forces `CultureInfo.InvariantCulture` and strips both U+00A0 and regular spaces for a stable `"100%"` output everywhere.
+
+### Added
+
+- **NEW [`docs/research/agent-memory-system.md`](docs/research/agent-memory-system.md)** — landscape survey of agent memory systems (Mem0, Zep, Letta, Serena, Quarry) with 6 reusable patterns, 5 anti-patterns, and a proposed design for CortexPlexus memory (TTL + scoped topics + Weibull decay). Research only — no implementation changes.
+
 ## [0.7.0] — 2026-04-15
 
 ### Changed
@@ -116,7 +126,8 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/DT-Tuan/cortexplexus/releases/tag/v0.5.0
