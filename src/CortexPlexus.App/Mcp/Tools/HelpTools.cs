@@ -8,14 +8,14 @@ public sealed class HelpTools
 {
     private static readonly string[] ValidTopics =
     {
-        "quick-start", "tools", "indexing", "strategies", "when-to-use", "all"
+        "quick-start", "tools", "indexing", "strategies", "when-to-use", "memory", "all"
     };
 
     [McpServerTool, Description(
         "Get usage guide for CortexPlexus MCP tools. " +
         "Call this FIRST when connecting to CortexPlexus to learn how to use all available tools effectively.")]
     public static string GetHelp(
-        [Description("Topic: 'quick-start', 'tools', 'indexing', 'strategies', 'when-to-use', or 'all' (default)")] string topic = "all")
+        [Description("Topic: 'quick-start', 'tools', 'indexing', 'strategies', 'when-to-use', 'memory', or 'all' (default)")] string topic = "all")
     {
         var normalized = topic.ToLowerInvariant();
         var content = normalized switch
@@ -25,7 +25,8 @@ public sealed class HelpTools
             "indexing" => IndexingGuide,
             "strategies" => Strategies,
             "when-to-use" => WhenToUse,
-            "all" => $"{QuickStart}\n\n{WhenToUse}\n\n{ToolReference}\n\n{IndexingGuide}\n\n{Strategies}",
+            "memory" => MemoryGuide,
+            "all" => $"{QuickStart}\n\n{WhenToUse}\n\n{ToolReference}\n\n{IndexingGuide}\n\n{Strategies}\n\n{MemoryGuide}",
             _ => null
         };
 
@@ -37,7 +38,7 @@ public sealed class HelpTools
             var validList = string.Join(", ", ValidTopics.Select(t => $"'{t}'"));
             return $"Unknown topic '{topic}'. Valid topics: {validList}.\n\n" +
                    $"Showing 'all' as default fallback:\n\n" +
-                   $"{QuickStart}\n\n{WhenToUse}\n\n{ToolReference}\n\n{IndexingGuide}\n\n{Strategies}";
+                   $"{QuickStart}\n\n{WhenToUse}\n\n{ToolReference}\n\n{IndexingGuide}\n\n{Strategies}\n\n{MemoryGuide}";
         }
 
         return content;
@@ -58,8 +59,14 @@ public sealed class HelpTools
 
         ## Step 2: Verify indexing
         → ListRepositories()
+        Also check the "Memory:" line — if enabled, you can use SaveMemory /
+        RecallMemory to persist context across sessions (see GetHelp("memory")).
 
-        ## Step 3: Explore
+        ## Step 3: Recall prior context (if memory is enabled)
+        → RecallMemory("<topic you're working on>", scope: "project", scopeId: "<repoId>", limit: 5)
+        Read any hits before starting — avoids re-discovering what you already knew.
+
+        ## Step 4: Explore
         → OnboardProject("repo-name")               # full project overview
         → ExploreTopic("ServiceName", depth:"deep")  # deep dive into a symbol
 
@@ -103,6 +110,31 @@ public sealed class HelpTools
         Rule of thumb: If you're about to grep for a class/method name, use SearchCode
         or ExploreTopic instead. If you're about to read multiple files to trace a flow,
         use a graph traversal tool.
+
+        ## Memory tools (v0.8.0, opt-in) — when to use vs when NOT
+
+        If Memory is enabled (see `ListRepositories()` → "Memory: enabled (N items)"):
+
+        | You want to...                            | Use memory tool           | NOT memory |
+        |-------------------------------------------|---------------------------|------------|
+        | Remember a user preference across chats   | SaveMemory(topic:"preference") | Re-ask user next session |
+        | Record a non-obvious project convention   | SaveMemory(topic:"pattern", scope:"project") | Keep in conversation only |
+        | Note a bug/workaround tied to a symbol    | SaveMemory(topic:"bug", relatedFqns:["X.Y"]) | Comment in chat that's lost at end |
+        | Recall prior context when resuming work   | RecallMemory("auth flow", scope:"project", scopeId:"<repoId>") | Re-read all docs from scratch |
+        | Audit what you've saved                   | ListMemories()             | — |
+        | Correct a wrong/stale memory              | ForgetMemory(id)           | Leave it to pollute recall |
+
+        DO NOT save as memory:
+        - Facts derivable from code (who calls X, what's in appsettings, etc.) — use SearchCode / GetCallers / GetConfigUsage instead.
+        - Things already in CLAUDE.md, ADRs, or docs/ — those are versioned and authoritative.
+        - Credentials, API keys, emails — the SecretsScanner will reject them anyway.
+        - Current-conversation-only state ("user is asking about X right now") — just use the chat.
+
+        Rule of thumb: If the fact would have been useful **in a future chat** and it's
+        NOT derivable from running `search_code` / `get_impact_analysis` / etc., save it.
+        Otherwise don't — memory pollution degrades recall quality for everyone.
+
+        See `GetHelp(topic: "memory")` for the full memory playbook.
         """;
 
     private const string ToolReference = """
@@ -256,5 +288,159 @@ public sealed class HelpTools
         ## Priority: composite > individual tools
         Always try ExploreTopic or OnboardProject first.
         Use individual tools only for very specific queries.
+
+        ## Memory workflow (when Memory is enabled — see GetHelp("memory"))
+
+        1. At session start: after ListRepositories(), call RecallMemory with the topic
+           you're about to work on. Example:
+             RecallMemory("auth middleware", scope: "project", scopeId: "<repoId>", limit: 5)
+           This gives you prior context before you start re-exploring the codebase.
+
+        2. During work: if the user states a preference ("we always use X here") or you
+           discover a non-obvious project convention, save it:
+             SaveMemory("Team prefers result-type error handling over exceptions",
+                        scope: "project", scopeId: "<repoId>", topic: "preference")
+
+        3. At end of session: if you learned something the next agent session would waste
+           time re-discovering, save it. Otherwise don't.
+
+        4. Use relatedFqns when the memory is about a specific symbol — then future
+           get_impact_analysis / explore_topic calls with include_memories=true surface it.
+        """;
+
+    private const string MemoryGuide = """
+        # Agent Memory — Usage Playbook (opt-in, v0.8.0+)
+
+        CortexPlexus memory is an opt-in, semantic, scoped, auto-decaying store for
+        things AI agents want to remember across sessions — preferences, project
+        conventions, bug notes, decisions — that are NOT derivable from the code itself.
+
+        ## Before you use it: verify it's enabled
+
+        Call `ListRepositories()`. Look for the "Memory:" line near the bottom:
+          - `Memory: enabled (N items).`    → memory tools work.
+          - `Memory: disabled. Enable via...` → tell the user, or skip memory entirely.
+
+        If disabled, do NOT try to save — the tools will just return a clear error.
+
+        ## The 3 scopes — pick the right one
+
+        | Scope     | scope_id                          | When to use                                      |
+        |-----------|-----------------------------------|--------------------------------------------------|
+        | `session` | client-supplied session UUID      | State that should die when the chat ends         |
+        | `project` | repository UUID (from ListRepos)  | Default for codebase-specific things (80% case)  |
+        | `global`  | null                              | Rare: user-wide preferences across all projects  |
+
+        Rule: default to `project` with the current repo's id. Only use `global`
+        for user-wide truths. Only use `session` for truly transient state.
+
+        ## The 6 topics — pick the right one (shapes decay)
+
+        | Topic        | Half-life (~) | Use for                                           |
+        |--------------|---------------|---------------------------------------------------|
+        | `preference` | 1 year        | User likes / dislikes, style choices              |
+        | `pattern`    | 6 months      | Code/design pattern specific to this project      |
+        | `decision`   | 6 months      | Why X was chosen over Y (mini-ADR)                |
+        | `bug`        | 3 months      | Known issue or workaround (fades after fix)       |
+        | `todo`       | 1 month       | Short-lived follow-up                             |
+        | `note`       | 2 months      | Default for unclassified memories                 |
+
+        Wrong topic = wrong decay speed. If unsure, use `note`.
+
+        ## Importance (0..1, default 0.5)
+
+        - 0.9+ : "this is foundational; future sessions absolutely need this"
+        - 0.5  : default — "probably useful later"
+        - 0.2- : "low-signal, store only because user explicitly asked"
+
+        Higher importance → survives decay longer. Don't inflate — it just delays the
+        inevitable forget.
+
+        ## Workflow pattern — resume work on a project
+
+        ```
+        1. ListRepositories()   → get repoId for your project, verify Memory: enabled
+        2. RecallMemory(query: "<what you're about to work on>",
+                        scope: "project", scopeId: "<repoId>", limit: 5)
+        3. If hits: read them BEFORE running search_code / explore_topic.
+           You might avoid re-discovering something you already knew.
+        4. Do your work.
+        5. If you learn something non-obvious: SaveMemory(...) with the right topic.
+        6. If you find a stale memory: ForgetMemory(id).
+        ```
+
+        ## Workflow pattern — user states a preference
+
+        User: "By the way, we always use Result<T> instead of throwing."
+
+        → Immediately:
+          SaveMemory(
+            content: "Team prefers Result<T> over exceptions for domain errors",
+            scope: "project",
+            scopeId: "<current repoId>",
+            topic: "preference",
+            importance: 0.8)
+
+        Don't wait until end of session. The act of stating a preference IS the signal.
+
+        ## Workflow pattern — bug tied to a symbol
+
+        You find: "PaymentProcessor.ProcessAsync has a race condition on retry"
+
+        → Save with soft link:
+          SaveMemory(
+            content: "Race condition on retry — fixed in PR #42 by adding mutex on _retryLock",
+            scope: "project",
+            scopeId: "<repoId>",
+            topic: "bug",
+            relatedFqns: ["App.Payments.PaymentProcessor.ProcessAsync"])
+
+        Later, when someone runs get_impact_analysis on that method with
+        include_memories=true, this surfaces automatically.
+
+        ## DO NOT save as memory
+
+        - Facts derivable from code (use search_code / get_callers / get_config_usage instead)
+        - Anything in CLAUDE.md, ADRs, or docs/ — those are versioned & authoritative
+        - Secrets, credentials, API keys, emails (the SecretsScanner rejects these anyway)
+        - Current-turn state ("user asked about X just now") — stay in the chat
+        - Summaries of what you just did — the diff / commit message covers that
+        - Duplicates of memories already in the store — run ListMemories() first if unsure
+
+        ## Common mistakes
+
+        1. "I'll just save everything, can't hurt" → WRONG. Recall is semantic + decay-ranked;
+           too much low-signal noise buries the good stuff. Memory is curation, not dump.
+
+        2. "I'll use `global` because it's easier" → WRONG. Global affects every project's
+           recall. Use `project` and pass the current repo's id.
+
+        3. "I'll make importance=1.0 to be safe" → WRONG. Inflation breaks ranking.
+           Save with a realistic score; let the user raise it if they want.
+
+        4. "I'll skip the topic" → OK but you get default 60-day decay. If this memory
+           matters for 6+ months, set `topic: "pattern"` or `"preference"` explicitly.
+
+        5. "Memory is disabled but I'll save anyway" → WRONG. The tool returns an error
+           telling the user how to enable. Don't retry.
+
+        ## The 4 tools (one-line each)
+
+        - SaveMemory(content, scope, scopeId?, topic?, importance?, relatedFqns?)
+          Stores a new memory after PII scan.
+
+        - RecallMemory(query, scope?, scopeId?, topic?, relatedFqn?, limit?)
+          Semantic + decay-ranked retrieval. Bumps access counter on hits.
+
+        - ListMemories(scope?, scopeId?, topic?, limit?)
+          Pure filter — no embedding cost. For audit / management.
+
+        - ForgetMemory(id)
+          Delete a specific memory by UUID.
+
+        ## See also
+
+        - docs/MEMORY-SYSTEM.md — full spec
+        - docs/decisions/010..013 — ADRs (Postgres reuse, scope model, Weibull decay, opt-in)
         """;
 }

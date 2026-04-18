@@ -14,6 +14,26 @@ Versioning notes:
 
 _No pending changes._
 
+## [0.8.1] — 2026-04-18
+
+Follow-up to v0.8.0: expanded AI-agent-facing guidance so coding assistants know
+**when to use** the memory tools, not just **how**. No code / schema changes.
+
+### Added
+
+- **NEW `get_help(topic: "memory")` — full playbook for AI agents**. Covers: verifying memory is enabled via `list_repositories`, picking the right scope (session vs project vs global decision guide), picking the right topic with its decay implications, workflow patterns ("resume work on a project", "user states a preference", "bug tied to a symbol"), and 5 common mistakes. ~130-line dedicated topic.
+- **`when-to-use` topic extended** — new "Memory tools (v0.8.0, opt-in)" table mapping user intent → tool, plus a "DO NOT save as memory" list. Keeps agents from polluting the store with facts derivable from code.
+- **`strategies` topic extended** — 4-step memory workflow pattern (recall at start, save during work, cleanup on exit, use relatedFqns for symbol-linked notes).
+- **`quick-start` updated** — added a "Step 3: Recall prior context (if memory is enabled)" between "Verify indexing" and "Explore", so agents see memory as part of the normal onboarding flow.
+- **All 4 memory tool `[Description]` strings rewritten** with explicit "USE for" / "DO NOT USE for" guidance, default scope recommendations, and cross-links to `GetHelp(topic: "memory")`. This is what agents see in the tool list at connection time.
+
+### Tests
+
+- `GetHelp` valid-topic Theory now includes `"memory"`.
+- New `GetHelp_MemoryTopic_CoversScopesTopicsAndWorkflow` regression guard — ensures scope names, topic names, and all 3 of SaveMemory/RecallMemory/ForgetMemory stay in the playbook.
+- New `GetHelp_AllIncludesMemoryGuide` — ensures the "all" default includes memory guidance.
+- Total tests: 776 (up from 773).
+
 ## [0.8.0] — 2026-04-18
 
 Focus: **agent memory system**. Opt-in (default off) semantic + graph-linked memory store for AI coding agents — replaces scattered per-agent `.md` dumps with a centralised, scoped, auto-decaying store that understands code at the FQN level. Competitive gap identified in Mem0/Zep/Letta/Serena/Quarry research (no self-hosted + code-native competitor). New MCP tools: SaveMemory / RecallMemory / ListMemories / ForgetMemory. Total MCP tool count: 26 → 30.
@@ -172,7 +192,8 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.6.0...v0.7.0

@@ -29,9 +29,13 @@ public sealed class MemoryTools
     };
 
     [McpServerTool, Description(
-        "Save a new agent memory (preference, bug, pattern, decision, todo, or note). " +
-        "Content is scanned for secrets/PII before storage; scope must be session|project|global. " +
-        "Use this to remember things across sessions that aren't derivable from code.")]
+        "Save a memory the agent should remember across sessions. " +
+        "USE for: user preferences, project conventions not obvious from code, bug notes tied to symbols (pass relatedFqns), architecture decisions without an ADR yet. " +
+        "DO NOT USE for: facts derivable from code (use search_code/get_callers/get_config_usage instead), duplicates of CLAUDE.md/ADR content, credentials, current-turn-only state. " +
+        "Pick scope: 'project' (default, use current repo id), 'global' (rare, user-wide), 'session' (transient). " +
+        "Pick topic (shapes decay): preference/pattern/decision=sticky, bug=medium, todo/note=short. " +
+        "Content is PII-scanned before storage. Requires Memory__Enabled=true on the server. " +
+        "See GetHelp(topic: 'memory') for the full playbook.")]
     public static async Task<string> SaveMemory(
         [Description("Free-text content, 1..4000 chars. No credentials or PII.")] string? content = null,
         [Description("Scope: 'session' | 'project' | 'global'")] string? scope = null,
@@ -101,8 +105,12 @@ public sealed class MemoryTools
     }
 
     [McpServerTool, Description(
-        "Semantic + filter recall of agent memories. Returns the top N matches ranked by " +
-        "relevance × Weibull decay score. Bumps access_count + last_accessed_at for returned rows.")]
+        "Retrieve memories relevant to a query, ranked by semantic similarity × decay score. " +
+        "CALL AT SESSION START after ListRepositories — before you start exploring the codebase. " +
+        "Returned rows have their access timestamp refreshed (useful memories stay fresh; unused ones decay). " +
+        "Pass scope='project' + scopeId=<repoId> for project-scoped recall (most common). " +
+        "Pass relatedFqn=<symbol> to retrieve memories linked to a specific symbol. " +
+        "Forgotten rows (below decay threshold) are auto-filtered out. Requires Memory__Enabled=true.")]
     public static async Task<string> RecallMemory(
         [Description("Query text for semantic search, 1..500 chars")] string? query = null,
         [Description("Scope filter: 'session' | 'project' | 'global' | 'all' (default 'all')")] string? scope = null,
@@ -164,8 +172,10 @@ public sealed class MemoryTools
     }
 
     [McpServerTool, Description(
-        "List agent memories by filter — no embedding, for audit and management. " +
-        "Includes near-forgotten rows (below decay threshold) so you can forget them explicitly.")]
+        "List memories matching a scope/topic filter. No semantic search, no cost for embedding. " +
+        "USE for: auditing what's stored, finding a memory to forget, checking before you save a duplicate. " +
+        "Unlike RecallMemory, this returns near-forgotten rows too so you can explicitly ForgetMemory them. " +
+        "For normal retrieval before working, use RecallMemory instead. Requires Memory__Enabled=true.")]
     public static async Task<string> ListMemories(
         [Description("Scope filter: 'session' | 'project' | 'global' | 'all' (default 'all')")] string? scope = null,
         [Description("Optional scope_id")] string? scopeId = null,
@@ -205,8 +215,11 @@ public sealed class MemoryTools
     }
 
     [McpServerTool, Description(
-        "Delete a specific memory by id. Use when the agent stored something wrong or " +
-        "when a memory has outlived its usefulness.")]
+        "Delete a specific memory by UUID. " +
+        "USE when: the user says 'forget that', you saved something wrong, you saw a stale/obsolete memory in RecallMemory/ListMemories. " +
+        "Get the id from a prior RecallMemory or ListMemories call. " +
+        "Returns { forgotten: true } on success, { forgotten: false, reason: 'not_found' } otherwise. " +
+        "Requires Memory__Enabled=true.")]
     public static async Task<string> ForgetMemory(
         [Description("UUID of the memory to delete")] string? id = null,
         IAgentMemoryStore store = default!,

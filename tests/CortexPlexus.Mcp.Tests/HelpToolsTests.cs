@@ -19,6 +19,7 @@ public sealed class HelpToolsTests
     [InlineData("indexing")]
     [InlineData("strategies")]
     [InlineData("when-to-use")]
+    [InlineData("memory")]
     [InlineData("all")]
     public void GetHelp_ValidTopic_ReturnsContentWithoutWarning(string topic)
     {
@@ -77,5 +78,33 @@ public sealed class HelpToolsTests
 
         Assert.DoesNotContain("Unknown topic", result);
         Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void GetHelp_MemoryTopic_CoversScopesTopicsAndWorkflow()
+    {
+        // The memory playbook must cover the key guidance an agent needs to pick
+        // the right scope, topic, and workflow. Regression guard against the
+        // guidance being deleted or fragmented by future edits.
+        var result = HelpTools.GetHelp("memory");
+
+        Assert.Contains("Memory", result);
+        Assert.Contains("session", result);
+        Assert.Contains("project", result);
+        Assert.Contains("global", result);
+        Assert.Contains("preference", result);
+        Assert.Contains("bug", result);
+        Assert.Contains("SaveMemory", result);
+        Assert.Contains("RecallMemory", result);
+        Assert.Contains("ForgetMemory", result);
+        Assert.Contains("DO NOT", result);
+    }
+
+    [Fact]
+    public void GetHelp_AllIncludesMemoryGuide()
+    {
+        var result = HelpTools.GetHelp("all");
+        Assert.Contains("SaveMemory", result);
+        Assert.Contains("RecallMemory", result);
     }
 }
