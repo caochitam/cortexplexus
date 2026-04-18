@@ -2,7 +2,9 @@ using System.ComponentModel;
 using System.Text;
 using CortexPlexus.Core.Abstractions;
 using CortexPlexus.Core.Models;
+using CortexPlexus.Memory;
 using CortexPlexus.Search;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 
 namespace CortexPlexus.App.Mcp.Tools;
@@ -23,10 +25,13 @@ public sealed class ExploreTools
         [Description("Required: natural language query or code symbol name to explore (e.g. 'chat message flow', 'PaymentService')")] string? query = null,
         [Description("Repository name to scope (optional)")] string? repository = null,
         [Description("Exploration depth: 'shallow' (search only), 'normal' (+ callers/deps), 'deep' (+ callees/impls/hierarchy)")] string depth = "normal",
+        [Description("Include agent memories linked to the top symbol (default false; requires Memory__Enabled=true)")] bool includeMemories = false,
         HybridQueryRouter router = default!,
         IGraphStore graphStore = default!,
         ContextCompressor compressor = default!,
-        IRepositoryStore repoStore = default!)
+        IRepositoryStore repoStore = default!,
+        IAgentMemoryStore? memoryStore = null,
+        IOptions<MemoryOptions>? memoryOptions = null)
     {
         // R22 Fix #11: friendly missing-param error (was throwing 500 via SDK before).
         if (string.IsNullOrWhiteSpace(query))
@@ -127,6 +132,30 @@ public sealed class ExploreTools
             sb.AppendLine($"**Referenced By ({referencedBy.Count}):** Who accesses this type?");
             sb.AppendLine(compressor.Compress(referencedBy.Take(10).ToList()));
             sb.AppendLine();
+        }
+
+        // Step 9 (opt-in): linked agent memories. Best-effort — never break explore
+        // on a memory-store hiccup.
+        if (includeMemories && memoryOptions?.Value.Enabled == true && memoryStore is not null)
+        {
+            try
+            {
+                var memories = await memoryStore.RecallAsync(
+                    queryEmbedding: null,
+                    scope: null, scopeId: null, topic: null,
+                    relatedFqn: targetFqn, limit: 5);
+                if (memories.Count > 0)
+                {
+                    sb.AppendLine($"**Linked Memories ({memories.Count}):**");
+                    foreach (var m in memories)
+                    {
+                        var topicLabel = m.Memory.Topic is null ? "" : $"[{m.Memory.Topic}] ";
+                        sb.AppendLine($"  - {topicLabel}{m.Memory.Content}");
+                    }
+                    sb.AppendLine();
+                }
+            }
+            catch { /* ignore — memory is best-effort */ }
         }
 
         return sb.ToString();

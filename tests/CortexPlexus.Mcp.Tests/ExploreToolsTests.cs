@@ -75,7 +75,8 @@ public class ExploreToolsTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         var result = await ExploreTools.ExploreTopic(
-            "FooService", null, "shallow", router, graphStore, compressor, repoStore);
+            "FooService", null, "shallow",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         // Phải có search results section.
         Assert.Contains("Exploration: FooService", result);
@@ -101,7 +102,8 @@ public class ExploreToolsTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         await ExploreTools.ExploreTopic(
-            "FooService", null, "deep", router, graphStore, compressor, repoStore);
+            "FooService", null, "deep",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         // Tất cả 5 graph queries phải được gọi.
         await graphStore.Received().QueryCallersAsync("App.FooService", Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -124,7 +126,8 @@ public class ExploreToolsTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         await ExploreTools.ExploreTopic(
-            "FooService", null, "normal", router, graphStore, compressor, repoStore);
+            "FooService", null, "normal",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         // Callers + Dependencies phải được gọi.
         await graphStore.Received().QueryCallersAsync("App.FooService", Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -179,7 +182,8 @@ public class ExploreToolsTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         var result = await ExploreTools.ExploreTopic(
-            "unknown query", null, "shallow", router, graphStore, compressor, repoStore);
+            "unknown query", null, "shallow",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         // Sau fallback phải có result.
         Assert.Contains("FooFound", result);
@@ -197,7 +201,8 @@ public class ExploreToolsTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         var result = await ExploreTools.ExploreTopic(
-            "ghost symbol", null, "normal", router, graphStore, compressor, repoStore);
+            "ghost symbol", null, "normal",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         Assert.Contains("No code found for 'ghost symbol'", result);
         Assert.Contains("more specific query", result); // actionable hint
@@ -219,7 +224,8 @@ public class ExploreToolsTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         var result = await ExploreTools.ExploreTopic(
-            "README", null, "deep", router, graphStore, compressor, repoStore);
+            "README", null, "deep",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         // Có search section nhưng KHÔNG có "Deep Dive" (vì không có code symbol để explore).
         Assert.Contains("Search Results", result);
@@ -301,10 +307,10 @@ public class ExploreToolsTests
             query: null,
             repository: null,
             depth: "normal",
-            router,
-            graphStore,
-            compressor,
-            repoStore);
+            router: router,
+            graphStore: graphStore,
+            compressor: compressor,
+            repoStore: repoStore);
 
         Assert.Contains("Missing required parameter", result);
         Assert.Contains("'query'", result);
@@ -324,10 +330,10 @@ public class ExploreToolsTests
             query: "   ",
             repository: null,
             depth: "normal",
-            router,
-            graphStore,
-            compressor,
-            repoStore);
+            router: router,
+            graphStore: graphStore,
+            compressor: compressor,
+            repoStore: repoStore);
 
         Assert.Contains("Missing required parameter", result);
     }

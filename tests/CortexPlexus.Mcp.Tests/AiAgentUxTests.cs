@@ -131,7 +131,8 @@ public class AiAgentUxTests
             .Returns(Task.FromResult<IReadOnlyList<SearchResult>>([]));
 
         var compressor = TestHelpers.BuildCompressor();
-        var result = await GraphTraversalTools.GetImpactAnalysis("App.Target", 2, graphStore, compressor);
+        var result = await GraphTraversalTools.GetImpactAnalysis(
+            "App.Target", 2, graphStore: graphStore, compressor: compressor);
 
         Assert.Contains("Impact analysis for: App.Target", result);
         Assert.Contains("--- Callers", result);
@@ -179,8 +180,8 @@ public class AiAgentUxTests
         var repoStore = TestHelpers.BuildRepoStore();
 
         var result = await ExploreTools.ExploreTopic(
-            "Service", null, "normal",
-            router, graphStore, compressor, repoStore);
+            query: "Service", repository: null, depth: "normal",
+            router: router, graphStore: graphStore, compressor: compressor, repoStore: repoStore);
 
         // 4 sections cho 1 single tool call → AI nhận được context đủ.
         Assert.Contains("## Exploration: Service", result);

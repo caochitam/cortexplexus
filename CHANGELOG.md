@@ -12,6 +12,12 @@ Versioning notes:
 
 ## [Unreleased]
 
+_No pending changes._
+
+## [0.8.0] — 2026-04-18
+
+Focus: **agent memory system**. Opt-in (default off) semantic + graph-linked memory store for AI coding agents — replaces scattered per-agent `.md` dumps with a centralised, scoped, auto-decaying store that understands code at the FQN level. Competitive gap identified in Mem0/Zep/Letta/Serena/Quarry research (no self-hosted + code-native competitor). New MCP tools: SaveMemory / RecallMemory / ListMemories / ForgetMemory. Total MCP tool count: 26 → 30.
+
 ### Added (v0.8.0 Wave 1 — foundation)
 
 - **NEW [`docs/MEMORY-SYSTEM.md`](docs/MEMORY-SYSTEM.md)** — user-facing spec for the opt-in agent memory system: scopes (session/project/global), topics, Weibull decay, enabling via config.
@@ -43,6 +49,16 @@ Wave 1 is **foundation only** — the store exists and the gate defaults to disa
 - **`list_repositories` now advertises memory state** — appends `Memory: enabled (N items).` or `Memory: disabled. Enable via Memory__Enabled=true ...` so users / agents see the feature state without having to probe.
 - **`get_help` tool reference** updated: 26 → 30 tools. New "AGENT MEMORY (opt-in)" section lists the 4 tools with one-line usage examples.
 - **Tests**: 19 `MemoryScoringTests` (pure, no DB — locks in decay formula), 7 `MemoryDecayTests` (integration: reap + decay-filtered recall), 19 `MemoryToolsTests` (NSubstitute mocks exercising every gate + validation branch). All 769 tests passing.
+
+### Added (v0.8.0 Wave 3 — symbol-graph integration + cross-cutting docs)
+
+- **`get_impact_analysis` gains `include_memories=false` parameter** — when true AND `Memory.Enabled=true`, memories linked to the analysed FQN surface under a new `--- Linked Memories ---` section alongside callers / implementations / hierarchy / references. Memory-store exceptions are swallowed so a glitch never breaks the core impact output.
+- **`explore_topic` gains the same `include_memories` flag** — memories linked to the deepest-explored symbol surface under `**Linked Memories**` in the report. Opt-in, gated identically.
+- **`docs/MEMORY-SYSTEM.md` §Symbol linking** updated with the final `include_memories=true` semantics on both tools.
+- **NEW `docs/ARCHITECTURE.md` §5.5** — agent memory store as the 4th pillar alongside graph / vector / FTS, with schema summary, decay overview, and cross-links to ADRs 010/011/012/013.
+- **`README.md` Features section** — tool count bumped 26 → 30, new bullet for the opt-in memory system, MCP Tools section header updated.
+- **`get_help("tools")` tool reference** — "AGENT MEMORY (opt-in)" section added with one-line examples for the 4 tools.
+- **Tests**: 4 new `MemoryIntegrationTests` covering `include_memories=false` (no recall), `includeMemories=true + disabled` (no recall), happy path (surfaces memory content with topic label), and memory-store exception (impact still returns). 773 tests passing.
 
 ## [0.7.1] — 2026-04-17
 
@@ -156,7 +172,8 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.5.0...v0.6.0

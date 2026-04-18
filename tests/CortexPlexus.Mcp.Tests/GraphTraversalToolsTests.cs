@@ -133,7 +133,8 @@ public class GraphTraversalToolsTests
 
         var compressor = TestHelpers.BuildCompressor();
 
-        var result = await GraphTraversalTools.GetImpactAnalysis("App.Target", 2, graphStore, compressor);
+        var result = await GraphTraversalTools.GetImpactAnalysis(
+            "App.Target", 2, graphStore: graphStore, compressor: compressor);
 
         // Verify tất cả 4 queries được gọi.
         await graphStore.Received().QueryCallersAsync("App.Target", 2, Arg.Any<CancellationToken>());
@@ -172,7 +173,8 @@ public class GraphTraversalToolsTests
 
         var compressor = TestHelpers.BuildCompressor();
 
-        var result = await GraphTraversalTools.GetImpactAnalysis("App.Target", 2, graphStore, compressor);
+        var result = await GraphTraversalTools.GetImpactAnalysis(
+            "App.Target", 2, graphStore: graphStore, compressor: compressor);
 
         // Total unique affected = 1 (dedupe by FQN).
         Assert.Contains("Total affected symbols: 1", result);
@@ -322,7 +324,8 @@ public class GraphTraversalToolsTests
         var compressor = TestHelpers.BuildCompressor();
 
         var result = await GraphTraversalTools.GetImpactAnalysis(
-            fqn: null, depth: 2, graphStore, compressor);
+            fqn: null, depth: 2,
+            graphStore: graphStore, compressor: compressor);
 
         Assert.Contains("Missing required parameter", result);
         Assert.Contains("'fqn'", result);

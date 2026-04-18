@@ -339,6 +339,34 @@ code_symbols (
 -- Indexes: HNSW (vector), GIN (tsvector), B-tree (fqn, repo_id)
 ```
 
+### 5.5 Agent Memory Store (v0.8.0+, opt-in)
+
+Fourth pillar alongside graph, vector, and FTS — but gated behind an opt-in flag (ADR-013, default `Memory.Enabled=false`). Agents call 4 MCP tools (save/recall/list/forget) to persist scoped, decay-weighted memories across sessions.
+
+```sql
+CREATE TABLE agent_memories (
+    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    content          TEXT        NOT NULL,    -- 1..4000 chars (CHECK)
+    scope            TEXT        NOT NULL,    -- 'session' | 'project' | 'global'
+    scope_id         TEXT        NULL,        -- required unless scope='global'
+    topic            TEXT        NULL,        -- 'preference'|'pattern'|'decision'|'bug'|'todo'|'note'
+    importance       REAL        NOT NULL DEFAULT 0.5,  -- 0..1 (CHECK)
+    related_fqns     TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],  -- soft link to code_symbols.fqn
+    embedding        vector(768) NULL,        -- same model as code_symbols
+    created_at       TIMESTAMPTZ NOT NULL,
+    last_accessed_at TIMESTAMPTZ NOT NULL,
+    access_count     INT         NOT NULL DEFAULT 0
+)
+
+-- Indexes: HNSW (embedding), GIN (related_fqns), B-tree (scope, scope_id)
+```
+
+Recall ranking combines semantic similarity (cosine) with a **Weibull decay** score (ADR-012): `score = importance × exp(-(t/λ)^1.5)`, where λ is per-topic (30–365 days). The `MemoryReaper` background service deletes rows whose score falls below 0.1 on a configurable interval.
+
+Soft link to the symbol graph: `related_fqns` is a denormalised text[] (GIN-indexed), not a foreign key, because FQNs drift across rename refactors. `get_impact_analysis` and `explore_topic` accept an `include_memories=true` flag to surface memories linked to the symbol under investigation alongside the normal impact/explore report.
+
+See [MEMORY-SYSTEM.md](MEMORY-SYSTEM.md) for the full spec, [ADR-010](decisions/010-memory-storage-reuse-postgres.md) for the Postgres-reuse rationale, [ADR-011](decisions/011-memory-scope-model.md) for the scope model, [ADR-012](decisions/012-memory-decay-weibull.md) for the decay curve, and [ADR-013](decisions/013-memory-opt-in-default.md) for the opt-in default.
+
 ## 6. Security Model
 
 ```

@@ -226,12 +226,15 @@ public sealed class GraphTraversalTools
             : compressor.Compress(results);
     }
 
-    [McpServerTool, Description("Analyze blast radius: find all code affected if a method or class changes")]
+    [McpServerTool, Description("Analyze blast radius: find all code affected if a method or class changes. Pass includeMemories=true to also surface agent memories linked to this symbol (opt-in; requires Memory__Enabled=true).")]
     public static async Task<string> GetImpactAnalysis(
         [Description("Fully qualified name of method or class to analyze")] string? fqn = null,
         [Description("Depth of impact chain (1-5)")] int depth = 2,
+        [Description("Include agent memories linked to this symbol (default false)")] bool includeMemories = false,
         IGraphStore graphStore = default!,
-        ContextCompressor compressor = default!)
+        ContextCompressor compressor = default!,
+        IAgentMemoryStore? memoryStore = null,
+        Microsoft.Extensions.Options.IOptions<CortexPlexus.Memory.MemoryOptions>? memoryOptions = null)
     {
         var err = RequireFqn(fqn, "fqn",
             "Example: GetImpactAnalysis(fqn: 'CortexFlow.Infrastructure.Services.ChatOrchestrator')");
@@ -254,7 +257,27 @@ public sealed class GraphTraversalTools
             .Select(g => g.First())
             .ToList();
 
-        if (allAffected.Count == 0)
+        // Memory linkage is a soft link — we fetch even if the impact list is empty,
+        // because a saved note on a rarely-called method is still worth surfacing.
+        IReadOnlyList<AgentMemoryResult> linkedMemories = Array.Empty<AgentMemoryResult>();
+        if (includeMemories && memoryOptions?.Value.Enabled == true && memoryStore is not null)
+        {
+            try
+            {
+                linkedMemories = await memoryStore.RecallAsync(
+                    queryEmbedding: null,
+                    scope: null, scopeId: null, topic: null,
+                    relatedFqn: fqn!,
+                    limit: 10);
+            }
+            catch
+            {
+                // Memory is opt-in and best-effort: never let a memory-store glitch
+                // break the core impact analysis response.
+            }
+        }
+
+        if (allAffected.Count == 0 && linkedMemories.Count == 0)
             return $"No impact found for '{fqn}'. It may not be referenced by other code.";
 
         var sb = new System.Text.StringBuilder();
@@ -281,6 +304,15 @@ public sealed class GraphTraversalTools
         {
             sb.AppendLine($"--- Class Hierarchy ({hierarchy.Count}) ---");
             sb.AppendLine(compressor.Compress(hierarchy));
+        }
+        if (linkedMemories.Count > 0)
+        {
+            sb.AppendLine($"--- Linked Memories ({linkedMemories.Count}) ---");
+            foreach (var m in linkedMemories)
+            {
+                var topicLabel = m.Memory.Topic is null ? "" : $"[{m.Memory.Topic}] ";
+                sb.AppendLine($"  {topicLabel}{m.Memory.Content}");
+            }
         }
 
         return sb.ToString();

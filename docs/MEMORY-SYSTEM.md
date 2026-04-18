@@ -99,7 +99,7 @@ Example:
 }
 ```
 
-When an agent later calls `get_impact_analysis` on `UserController` with `include_memories=true`, the memory surfaces alongside the impact report.
+When an agent later calls `get_impact_analysis` on `UserController` with `include_memories=true`, the memory surfaces alongside the impact report. `explore_topic` also accepts `include_memories=true` and surfaces memories linked to the deepest-explored symbol.
 
 ## Enabling memory
 

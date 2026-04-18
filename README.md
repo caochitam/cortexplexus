@@ -145,7 +145,7 @@ After creating the file, **restart your IDE session** — no client hot-reloads 
 
 ## Features
 
-- **26 MCP tools** — search, navigation, .NET deep analysis, data flow, test coverage, dead code, circular deps, composite (`OnboardProject`, `ExploreTopic`)
+- **30 MCP tools** — search, navigation, .NET deep analysis, data flow, test coverage, dead code, circular deps, composite (`OnboardProject`, `ExploreTopic`), and opt-in agent memory (`SaveMemory`, `RecallMemory`, `ListMemories`, `ForgetMemory`)
 - **Multi-language** — C# (Roslyn deep semantic) + TypeScript / JavaScript / Python / Java / Go / Rust / PHP / Markdown
 - **.NET deep analysis** — DI registrations, EF Core entity mappings, Minimal API routes (with `[controller]` token expansion), middleware pipeline order, NuGet audit
 - **Triple hybrid search** — Apache AGE Cypher (graph) + pgvector HNSW (vector) + tsvector BM25 (full-text) + RRF fusion
@@ -155,6 +155,7 @@ After creating the file, **restart your IDE session** — no client hot-reloads 
 - **HNSW bulk-load optimization** — drop/recreate index for fast initial indexing, ~250–1000× faster vector phase on large projects
 - **Embedding** — Google Gemini API (free tier) or Ollama (offline, default)
 - **Self-hosted** — 2 Docker containers, zero cloud dependency, zero cost
+- **Agent memory (v0.8.0, opt-in)** — semantic, scoped (session/project/global), auto-decaying store backed by pgvector HNSW. Opt-in via `Memory__Enabled=true`; see [docs/MEMORY-SYSTEM.md](docs/MEMORY-SYSTEM.md)
 
 ## Tech Stack
 
@@ -168,7 +169,7 @@ After creating the file, **restart your IDE session** — no client hot-reloads 
 | MCP SDK | ModelContextProtocol .NET SDK | MIT |
 | Search | Apache AGE Cypher + pgvector HNSW + tsvector BM25 | — |
 
-## MCP Tools (26)
+## MCP Tools (30)
 
 ### Search & navigation
 - `search_code` — hybrid full-text + vector search with optional repo scope
