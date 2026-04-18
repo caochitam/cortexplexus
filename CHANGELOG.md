@@ -14,6 +14,27 @@ Versioning notes:
 
 _No pending changes._
 
+## [0.8.2] — 2026-04-18
+
+Hotfix: `BasicSecretsScanner` now detects common well-known API-key formats (Google / OpenAI / Anthropic / GitHub / AWS / JWT), not only `api_key=` / `Bearer` / connection-string patterns. Caught by an end-to-end smoke test on v0.8.1 where a Gemini-format key (`AIzaSyD...`) was accepted by `save_memory`.
+
+### Fixed
+
+- **`BasicSecretsScanner.ContainsSecrets` now flags deterministic API-key formats**:
+  - Google API keys (Gemini, Maps, Firebase): `AIzaSy` + 33 chars
+  - OpenAI: `sk-proj-*` or `sk-*` with 20+ chars
+  - Anthropic: `sk-ant-*` with 20+ chars
+  - GitHub PAT / fine-grained / OAuth tokens: `ghp_` / `gho_` / `ghu_` / `ghs_` / `ghr_` + 36+ chars
+  - AWS Access Key ID: `AKIA` + 16 uppercase alphanumerics
+  - JWT (three base64-url segments): `eyJ...eyJ...`
+- **`BasicSecretsScanner.Sanitize` now redacts the same formats** with the `[REDACTED_API_KEY]` marker.
+
+Same patterns are already in the client-side `report-cortexplexus-bug` skill; this aligns the server-side scanner with it so `save_memory` can't leak credentials that were typed in natural-language form.
+
+### Tests
+
+- 13 new unit tests in `CortexPlexus.Core.Tests.SecretsScannerTests`: 6 positives (one per key format), 4 false-positive guards (short strings, keyword-alone, unrelated prose), 3 Sanitize redaction tests. 789 tests green.
+
 ## [0.8.1] — 2026-04-18
 
 Follow-up to v0.8.0: expanded AI-agent-facing guidance so coding assistants know
@@ -192,7 +213,8 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.0...v0.7.1
