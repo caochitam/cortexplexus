@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text;
+using CortexPlexus.Core.Abstractions;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 
@@ -12,17 +14,58 @@ public sealed class AgentTools
         "Returns a structured, step-by-step recipe for the AI assistant to execute LOCALLY via Bash. " +
         "The agent parses source on the user's machine (Roslyn for C#, Tree-sitter for other languages) " +
         "and uploads only metadata — the source never leaves the dev machine. " +
-        "Server URL auto-detected from the MCP connection; the AI should not guess or assume localhost.")]
-    public static string ActivateAgent(
+        "Server URL auto-detected from the MCP connection; the AI should not guess or assume localhost. " +
+        "If the project was already indexed but the index is stale (>24h old), the recipe leads with a " +
+        "warning so the AI re-syncs via file-hash diff before using search/explore tools.")]
+    public static async Task<string> ActivateAgent(
         [Description("Absolute path to the project directory on the AI client's local machine.")] string projectPath,
         [Description("Project name (used as identifier in CortexPlexus). Default: basename of projectPath.")] string? projectName = null,
         [Description("Override server URL. Leave unset to auto-detect from this MCP connection — recommended.")] string? serverUrl = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IRepositoryStore? repoStore = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(projectPath))
             return "Error: projectPath is required (absolute path to the project on the user's machine).";
 
         var name = projectName ?? Path.GetFileName(projectPath.TrimEnd('/', '\\'));
+
+        // Staleness precheck (v0.8.3): if this project name is already in the
+        // repositories table, surface how old the index is. A stale index is
+        // the #1 cause of "I searched and the result looked wrong" — agents
+        // who see this warning know to expect the agent to re-sync on start.
+        string? stalenessBlock = null;
+        if (repoStore is not null)
+        {
+            try
+            {
+                var repos = await repoStore.ListAsync(ct);
+                var matchingRepo = repos
+                    .Where(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(r => r.LastIndexed ?? DateTimeOffset.MinValue)
+                    .FirstOrDefault();
+                if (matchingRepo is not null)
+                {
+                    var label = StalenessLabel.Format(matchingRepo.LastIndexed, DateTimeOffset.UtcNow);
+                    if (label is not null)
+                    {
+                        var sb = new StringBuilder();
+                        sb.AppendLine($"> **Index freshness**: last updated {label}.");
+                        sb.AppendLine("> When you run the agent below, it computes a SHA-256 diff against the server's");
+                        sb.AppendLine("> `file_hashes` table and re-parses only changed files. Expected re-sync time depends");
+                        sb.AppendLine("> on how much changed — usually seconds to a few minutes. Until re-sync completes,");
+                        sb.AppendLine("> search / explore / impact results reflect the stale index.");
+                        sb.AppendLine();
+                        stalenessBlock = sb.ToString();
+                    }
+                }
+            }
+            catch
+            {
+                // Repo lookup is best-effort — never fail ActivateAgent just because
+                // the staleness check couldn't read the repositories table.
+            }
+        }
 
         // Resolution order:
         //   1. explicit serverUrl argument (highest precedence — caller knows what they want)
@@ -87,6 +130,7 @@ public sealed class AgentTools
 
             Platform inferred: **{{platformTag}}** (from the path style).
 
+            {{stalenessBlock}}
             ---
 
             ## Step 1 — Verify prerequisites

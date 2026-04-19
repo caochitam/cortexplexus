@@ -32,20 +32,22 @@ public sealed class MemoryTools
         "Save a memory the agent should remember across sessions. " +
         "USE for: user preferences, project conventions not obvious from code, bug notes tied to symbols (pass relatedFqns), architecture decisions without an ADR yet. " +
         "DO NOT USE for: facts derivable from code (use search_code/get_callers/get_config_usage instead), duplicates of CLAUDE.md/ADR content, credentials, current-turn-only state. " +
-        "Pick scope: 'project' (default, use current repo id), 'global' (rare, user-wide), 'session' (transient). " +
+        "Pick scope: 'project' (default, pass `repository` name OR `scopeId` UUID), 'global' (rare, user-wide), 'session' (transient). " +
         "Pick topic (shapes decay): preference/pattern/decision=sticky, bug=medium, todo/note=short. " +
         "Content is PII-scanned before storage. Requires Memory__Enabled=true on the server. " +
         "See GetHelp(topic: 'memory') for the full playbook.")]
     public static async Task<string> SaveMemory(
         [Description("Free-text content, 1..4000 chars. No credentials or PII.")] string? content = null,
         [Description("Scope: 'session' | 'project' | 'global'")] string? scope = null,
-        [Description("scope_id: session UUID for 'session', repository ID for 'project', ignored for 'global'")] string? scopeId = null,
+        [Description("For scope='project': repository NAME (preferred, matches ListRepositories). Alternative to scopeId.")] string? repository = null,
+        [Description("scope_id UUID: session id for 'session', repository UUID for 'project', ignored for 'global'. If scope='project', prefer `repository` name; scopeId UUID is power-user fallback.")] string? scopeId = null,
         [Description("Topic: 'preference' | 'pattern' | 'decision' | 'bug' | 'todo' | 'note' (optional)")] string? topic = null,
         [Description("Importance 0..1; omit to use server default (0.5)")] double? importance = null,
         [Description("Optional FQNs to link this memory to (soft link, no FK)")] string[]? relatedFqns = null,
         IAgentMemoryStore store = default!,
         IEmbeddingService embeddings = default!,
         ISecretsScanner secrets = default!,
+        IRepositoryStore repoStore = default!,
         IOptions<MemoryOptions> options = default!,
         CancellationToken ct = default)
     {
@@ -57,8 +59,16 @@ public sealed class MemoryTools
             return "Error: 'scope' is required — one of 'session', 'project', 'global'.";
         if (!MemoryScope.IsValid(scope))
             return $"Error: invalid scope '{scope}'. Valid: 'session', 'project', 'global'.";
+
+        // Resolve repository name → UUID for project scope. Repository takes precedence
+        // over scopeId if both provided. Eliminates typo/wrong-UUID-copy risks (v0.8.3).
+        var resolvedScopeId = await ResolveProjectScopeIdAsync(
+            scope!, repository, scopeId, repoStore, ct);
+        if (resolvedScopeId.Error is not null) return resolvedScopeId.Error;
+        scopeId = resolvedScopeId.ScopeId;
+
         if (scope != MemoryScope.Global && string.IsNullOrWhiteSpace(scopeId))
-            return $"Error: scope='{scope}' requires a scope_id.";
+            return $"Error: scope='{scope}' requires either `repository` (name) or `scopeId` (UUID).";
         if (!MemoryTopic.IsValid(topic))
             return $"Error: invalid topic '{topic}'. Valid: {string.Join(", ", MemoryTopic.All)}, or omit.";
 
@@ -108,18 +118,20 @@ public sealed class MemoryTools
         "Retrieve memories relevant to a query, ranked by semantic similarity × decay score. " +
         "CALL AT SESSION START after ListRepositories — before you start exploring the codebase. " +
         "Returned rows have their access timestamp refreshed (useful memories stay fresh; unused ones decay). " +
-        "Pass scope='project' + scopeId=<repoId> for project-scoped recall (most common). " +
+        "Pass scope='project' + `repository` name (or scopeId UUID) for project-scoped recall. " +
         "Pass relatedFqn=<symbol> to retrieve memories linked to a specific symbol. " +
         "Forgotten rows (below decay threshold) are auto-filtered out. Requires Memory__Enabled=true.")]
     public static async Task<string> RecallMemory(
         [Description("Query text for semantic search, 1..500 chars")] string? query = null,
         [Description("Scope filter: 'session' | 'project' | 'global' | 'all' (default 'all')")] string? scope = null,
-        [Description("Optional scope_id to narrow within the given scope")] string? scopeId = null,
+        [Description("For scope='project': repository NAME (preferred). Alternative to scopeId UUID.")] string? repository = null,
+        [Description("Optional scope_id UUID (alt to `repository`)")] string? scopeId = null,
         [Description("Filter by topic (preference|pattern|decision|bug|todo|note)")] string? topic = null,
         [Description("Filter to memories linked to a specific symbol FQN")] string? relatedFqn = null,
         [Description("Max results, 1..50 (default 10)")] int limit = 10,
         IAgentMemoryStore store = default!,
         IEmbeddingService embeddings = default!,
+        IRepositoryStore repoStore = default!,
         IOptions<MemoryOptions> options = default!,
         CancellationToken ct = default)
     {
@@ -133,6 +145,12 @@ public sealed class MemoryTools
             return $"Error: invalid scope '{scope}'. Valid: 'session', 'project', 'global', 'all', or omit.";
         if (!MemoryTopic.IsValid(topic))
             return $"Error: invalid topic '{topic}'.";
+
+        // Resolve repository name → UUID if project scope.
+        var resolvedScopeId = await ResolveProjectScopeIdAsync(
+            scope, repository, scopeId, repoStore, ct);
+        if (resolvedScopeId.Error is not null) return resolvedScopeId.Error;
+        scopeId = resolvedScopeId.ScopeId;
 
         float[]? queryEmbedding;
         try
@@ -178,10 +196,12 @@ public sealed class MemoryTools
         "For normal retrieval before working, use RecallMemory instead. Requires Memory__Enabled=true.")]
     public static async Task<string> ListMemories(
         [Description("Scope filter: 'session' | 'project' | 'global' | 'all' (default 'all')")] string? scope = null,
-        [Description("Optional scope_id")] string? scopeId = null,
+        [Description("For scope='project': repository NAME (preferred). Alternative to scopeId UUID.")] string? repository = null,
+        [Description("Optional scope_id UUID (alt to `repository`)")] string? scopeId = null,
         [Description("Filter by topic")] string? topic = null,
         [Description("Max results, 1..500 (default 50)")] int limit = 50,
         IAgentMemoryStore store = default!,
+        IRepositoryStore repoStore = default!,
         IOptions<MemoryOptions> options = default!,
         CancellationToken ct = default)
     {
@@ -191,6 +211,12 @@ public sealed class MemoryTools
             return $"Error: invalid scope '{scope}'.";
         if (!MemoryTopic.IsValid(topic))
             return $"Error: invalid topic '{topic}'.";
+
+        // Resolve repository name → UUID if project scope.
+        var resolvedScopeId = await ResolveProjectScopeIdAsync(
+            scope, repository, scopeId, repoStore, ct);
+        if (resolvedScopeId.Error is not null) return resolvedScopeId.Error;
+        scopeId = resolvedScopeId.ScopeId;
 
         var memories = await store.ListAsync(
             scope, scopeId, topic, Math.Clamp(limit, 1, 500), ct);
@@ -237,5 +263,54 @@ public sealed class MemoryTools
         return removed
             ? JsonSerializer.Serialize(new { forgotten = true, id = guid }, JsonOpts)
             : JsonSerializer.Serialize(new { forgotten = false, id = guid, reason = "not_found" }, JsonOpts);
+    }
+
+    /// <summary>
+    /// Resolves the effective project scope_id from (repository name, scopeId UUID).
+    /// Rules (v0.8.3 Option A):
+    ///   - If `repository` is provided: resolve via RepoResolver. If it resolves, that wins
+    ///     (even if a scopeId UUID was also passed). If it doesn't resolve, return error.
+    ///   - Else if `scopeId` is a valid UUID: pass through as-is.
+    ///   - Else return (null, null) — caller decides whether the lack-of-id is an error.
+    /// This helper keeps the 3 memory tools' resolution logic consistent.
+    /// </summary>
+    private static async Task<(string? ScopeId, string? Error)> ResolveProjectScopeIdAsync(
+        string? scope,
+        string? repository,
+        string? scopeId,
+        IRepositoryStore repoStore,
+        CancellationToken ct)
+    {
+        // Non-project scope doesn't need resolution. scopeId passes through as-is
+        // (session scope uses a client session UUID; global requires no id).
+        if (scope != MemoryScope.Project)
+            return (scopeId, null);
+
+        // Repository name takes precedence over scopeId (v0.8.3 rule).
+        if (!string.IsNullOrWhiteSpace(repository))
+        {
+            var resolved = await RepoResolver.ResolveAsync(repository, repoStore, ct);
+            if (resolved is null)
+                return (null,
+                    $"Error: repository '{repository}' not found. " +
+                    "Call ListRepositories() to see available repositories by name.");
+            return (resolved.Value.ToString(), null);
+        }
+
+        // Fall back to scopeId UUID. Validate it's actually a UUID so a mistyped
+        // non-UUID string doesn't silently become an orphan scope_id.
+        if (!string.IsNullOrWhiteSpace(scopeId))
+        {
+            if (!Guid.TryParse(scopeId, out _))
+                return (null,
+                    $"Error: scopeId '{scopeId}' is not a valid UUID. " +
+                    "Pass `repository` name instead (preferred), or a valid repositories.id UUID.");
+            // Optional: could also verify the UUID actually exists in repositories.
+            // We skip that check here to keep the tool fast; an orphan scope_id
+            // simply means no recall will ever match it, not a fatal error.
+            return (scopeId, null);
+        }
+
+        return (null, null);
     }
 }

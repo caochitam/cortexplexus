@@ -429,7 +429,10 @@ public sealed class GraphTraversalTools
             var r = g.Primary;
             sb.AppendLine($"  Name: {r.Name}");
             sb.AppendLine($"  Path: {r.Path}");
-            sb.AppendLine($"  Last indexed: {r.LastIndexed?.ToString("yyyy-MM-dd HH:mm:ss") ?? "never"}");
+            var timestamp = r.LastIndexed?.ToString("yyyy-MM-dd HH:mm:ss") ?? "never";
+            var stalenessLabel = StalenessLabel.Format(r.LastIndexed, DateTimeOffset.UtcNow);
+            var stalenessSuffix = stalenessLabel is null ? "" : $" {stalenessLabel}";
+            sb.AppendLine($"  Last indexed: {timestamp}{stalenessSuffix}");
 
             if (dataSource is null)
             {

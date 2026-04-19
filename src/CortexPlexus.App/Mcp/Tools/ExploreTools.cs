@@ -158,6 +158,25 @@ public sealed class ExploreTools
             catch { /* ignore — memory is best-effort */ }
         }
 
+        // Append staleness footer if the target repo's index is > 24h old.
+        // Uses the stalest of the probed repos so cross-repo searches don't
+        // hide the problem with a fresh repo.
+        var allRepos = await repoStore.ListAsync();
+        var relevantRepos = repoId is null
+            ? allRepos.Where(r => r.LastIndexed is not null).ToList()
+            : allRepos.Where(r => r.Id == repoId.Value).ToList();
+        if (relevantRepos.Count > 0)
+        {
+            var stalest = relevantRepos
+                .OrderBy(r => r.LastIndexed ?? DateTimeOffset.MaxValue).First();
+            var footer = StalenessLabel.SearchFooter(stalest.LastIndexed, DateTimeOffset.UtcNow);
+            if (footer is not null)
+            {
+                sb.AppendLine();
+                sb.AppendLine(footer);
+            }
+        }
+
         return sb.ToString();
     }
 

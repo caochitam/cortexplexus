@@ -21,9 +21,8 @@ public sealed class SearchTools
     {
         var repoId = await RepoResolver.ResolveAsync(repository, repoStore);
         var results = await router.SearchAsync(new SearchRequest(query, SearchType.Bm25, limit, RepoId: repoId, Expand: expand));
-        return results.Count == 0
-            ? "No results found."
-            : compressor.Compress(results);
+        var body = results.Count == 0 ? "No results found." : compressor.Compress(results);
+        return await AppendStalenessFooter(body, repoId, repoStore);
     }
 
     [McpServerTool, Description("Search code using natural language semantic search with optional query expansion")]
@@ -38,8 +37,28 @@ public sealed class SearchTools
     {
         var repoId = await RepoResolver.ResolveAsync(repository, repoStore);
         var results = await router.SearchAsync(new SearchRequest(query, SearchType.Hybrid, limit, RepoId: repoId, Expand: expand));
-        return results.Count == 0
-            ? "No results found."
-            : compressor.Compress(results);
+        var body = results.Count == 0 ? "No results found." : compressor.Compress(results);
+        return await AppendStalenessFooter(body, repoId, repoStore);
+    }
+
+    /// <summary>
+    /// Append the staleness warning when the relevant repository/repositories
+    /// have a last-indexed timestamp older than 24h. For scoped searches we
+    /// check only that repo; for cross-repo searches we check the stalest.
+    /// See <see cref="StalenessLabel"/> for thresholds.
+    /// </summary>
+    private static async Task<string> AppendStalenessFooter(string body, Guid? repoId, IRepositoryStore repoStore)
+    {
+        var repos = await repoStore.ListAsync();
+        var relevant = repoId is null
+            ? repos.Where(r => r.LastIndexed is not null).ToList()
+            : repos.Where(r => r.Id == repoId.Value).ToList();
+        if (relevant.Count == 0) return body;
+
+        var stalest = relevant
+            .OrderBy(r => r.LastIndexed ?? DateTimeOffset.MaxValue)
+            .First();
+        var footer = StalenessLabel.SearchFooter(stalest.LastIndexed, DateTimeOffset.UtcNow);
+        return footer is null ? body : $"{body}\n\n{footer}";
     }
 }

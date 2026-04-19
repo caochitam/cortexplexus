@@ -217,6 +217,75 @@ launchctl unload ~/Library/LaunchAgents/com.dt-tuan.cortexplexus-agent.myproject
 
 ---
 
+## VS Code — per-workspace auto-start on folder open
+
+If you open your project in VS Code and don't want a reboot-level
+supervisor, drop a `tasks.json` snippet into the workspace so opening
+the folder launches the agent automatically. This is the **lowest-cost
+fix** for the common "I forgot to start the agent and now my index is
+stale" scenario.
+
+Create (or append to) `.vscode/tasks.json` **inside the project you
+want indexed** (not the CortexPlexus repo itself):
+
+```jsonc
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CortexPlexus: start watch",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "${env:HOME}/.cortexplexus/agent/cortexplexus-agent.dll",
+        "watch",
+        "${workspaceFolder}",
+        "--server", "http://192.168.50.14:8080",
+        "--name",  "${workspaceFolderBasename}"
+      ],
+      "isBackground": true,
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "close": false
+      },
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+On Windows, replace `${env:HOME}` with `${env:USERPROFILE}` and
+`http://...:8080` with your actual server URL (or leave as detected by
+ActivateAgent).
+
+### What this gives you
+
+- Opening the folder (any workspace reload) starts the agent in a
+  dedicated silent terminal.
+- The agent attaches to the server, computes a SHA-256 diff of the
+  working tree, and re-syncs only the files that changed since the
+  previous run — usually seconds to a minute.
+- Closing VS Code stops the agent (task terminates with the editor).
+- First run asks for trust on the task; subsequent opens are automatic.
+
+### If multiple people share the project
+
+Commit the `tasks.json` so the convention travels with the code.
+Teammates who don't use CortexPlexus can ignore the task; it only
+starts when they open the workspace and VS Code surfaces a one-time
+trust prompt. The task has no side effects beyond the local agent.
+
+### Limitation — VS Code only
+
+This pattern is VS Code-specific. For other editors see the
+[systemd / Windows Task Scheduler / NSSM / macOS LaunchAgent](#linux--macos--systemd-user-unit)
+sections above — those are editor-agnostic but reboot-level.
+
+---
+
 ## See also
 
 - [`deployment.md`](deployment.md) — initial deploy of CortexPlexus server

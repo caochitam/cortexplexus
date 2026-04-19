@@ -14,6 +14,54 @@ Versioning notes:
 
 _No pending changes._
 
+## [0.8.3] — 2026-04-19
+
+Focus: **operational safety around stale indices + UX polish for memory tools**.
+Smoke-test findings from v0.8.2 real usage drove two related improvements:
+(1) forgetting to start the agent at VS Code session start → search tools silently
+return stale results, (2) memory tools required a UUID for `scopeId` which was
+error-prone (typo, wrong-repo-copy, name-collision).
+
+### Added
+
+- **`save_memory` / `recall_memory` / `list_memories` accept a `repository` NAME** as
+  an alternative to `scopeId` UUID (Option A). Repository name is resolved via
+  `RepoResolver.ResolveAsync` (the same R25 tie-break helper used by all search
+  tools). When both are provided, `repository` wins. Removes the whole class of
+  "wrong UUID" bugs; agents no longer need to maintain a name→UUID lookup table.
+  Old `scopeId` path remains for power users and backward compat. UUIDs are now
+  validated to fail fast on a mistyped non-UUID instead of becoming orphan
+  scope_ids silently.
+- **NEW `StalenessLabel` helper** in `src/CortexPlexus.App/Mcp/Tools/` — computes
+  human-readable age labels (`"(3 days ago) ⚠️ STALE"`) and optional warning
+  footers for search results. Thresholds: &lt;6h hidden, 6h–24h plain, 24h–7d
+  STALE, &gt;7d VERY STALE.
+- **`list_repositories` annotates each repo's `Last indexed:` line** with its
+  staleness label when &gt;6h old. Agents see immediately if an index is stale.
+- **`search_code` / `semantic_search` / `explore_topic` append a staleness
+  footer** when the queried repo's index is &gt;24h old, with a clear recovery
+  action (`"Run ActivateAgent ..."`). Cross-repo queries use the stalest
+  relevant repo so a fresh repo doesn't mask a stale one.
+- **`ActivateAgent` leads with an "Index freshness" block** when the named
+  project is already in the repositories table and the last index is &gt;6h
+  old. Explains that the agent will re-sync via SHA-256 file-hash diff and
+  how long the user should expect that to take. Best-effort — a DB hiccup on
+  the freshness probe never fails ActivateAgent.
+- **Runbook: [`docs/runbooks/agent-auto-start.md`](docs/runbooks/agent-auto-start.md)** gains a VS Code
+  `.vscode/tasks.json` section — opening the workspace auto-launches
+  `cortexplexus-agent watch` in a silent dedicated terminal. Lowest-cost fix
+  for the "forgot to start the agent" pain; per-workspace, commits with the
+  repo, survives editor reloads, dies with the editor.
+
+### Tests
+
+- 4 new tests in `MemoryToolsTests` covering Option A: repo name resolves to UUID,
+  non-existent name returns friendly error, name-takes-precedence-over-UUID,
+  mistyped UUID is rejected with a clear message.
+- 10 new `StalenessLabelTests` locking in all 4 severity bands + singular/plural
+  age formatting + null-lastIndexed behavior.
+- Total: 803 tests green (up from 789).
+
 ## [0.8.2] — 2026-04-18
 
 Hotfix: `BasicSecretsScanner` now detects common well-known API-key formats (Google / OpenAI / Anthropic / GitHub / AWS / JWT), not only `api_key=` / `Bearer` / connection-string patterns. Caught by an end-to-end smoke test on v0.8.1 where a Gemini-format key (`AIzaSyD...`) was accepted by `save_memory`.
@@ -213,7 +261,8 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/DT-Tuan/cortexplexus/compare/v0.7.1...v0.8.0

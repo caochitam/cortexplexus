@@ -87,7 +87,7 @@ public sealed class MemoryToolsTests
             store: BuildStore(), embeddings: BuildEmbeddings(),
             secrets: BuildScanner(), options: Opts(true));
 
-        Assert.Contains("requires a scope_id", result);
+        Assert.Contains("requires either `repository`", result);
     }
 
     [Fact]
@@ -287,5 +287,117 @@ public sealed class MemoryToolsTests
 
         Assert.Contains("\"forgotten\": false", result);
         Assert.Contains("not_found", result);
+    }
+
+    // --- v0.8.3 Option A: repository name acceptance ---
+
+    [Fact]
+    public async Task SaveMemory_RepositoryName_ResolvesToScopeId()
+    {
+        var store = BuildStore();
+        var repoId = Guid.NewGuid();
+        store.SaveAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Is<string?>(s => s == repoId.ToString()),
+                Arg.Any<string?>(), Arg.Any<double>(),
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<float[]?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new AgentMemory(
+                Id: Guid.NewGuid(), Content: "x",
+                Scope: MemoryScope.Project, ScopeId: repoId.ToString(),
+                Topic: null, Importance: 0.5,
+                RelatedFqns: Array.Empty<string>(),
+                CreatedAt: DateTimeOffset.UtcNow,
+                LastAccessedAt: DateTimeOffset.UtcNow, AccessCount: 0)));
+
+        var repoStore = TestHelpers.BuildRepoStore(
+            TestHelpers.MakeRepo("MyProject", id: repoId));
+
+        var result = await MemoryTools.SaveMemory(
+            content: "a convention",
+            scope: MemoryScope.Project,
+            repository: "MyProject",
+            store: store, embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), repoStore: repoStore,
+            options: Opts(true));
+
+        Assert.Contains("\"stored\": true", result);
+        // Store.SaveAsync was invoked with the resolved UUID, not the name.
+        await store.Received(1).SaveAsync(
+            Arg.Any<string>(), MemoryScope.Project, repoId.ToString(),
+            Arg.Any<string?>(), Arg.Any<double>(),
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<float[]?>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SaveMemory_RepositoryName_NotFound_ReturnsError()
+    {
+        var repoStore = TestHelpers.BuildRepoStore(
+            TestHelpers.MakeRepo("SomeOtherProject"));
+
+        var result = await MemoryTools.SaveMemory(
+            content: "x",
+            scope: MemoryScope.Project,
+            repository: "GhostProject",
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), repoStore: repoStore,
+            options: Opts(true));
+
+        Assert.Contains("repository 'GhostProject' not found", result);
+        Assert.Contains("ListRepositories()", result);
+    }
+
+    [Fact]
+    public async Task SaveMemory_RepositoryNameTakesPrecedenceOverScopeId()
+    {
+        var realId = Guid.NewGuid();
+        var wrongId = Guid.NewGuid();
+        var store = BuildStore();
+        store.SaveAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<double>(),
+                Arg.Any<IReadOnlyList<string>?>(), Arg.Any<float[]?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new AgentMemory(
+                Id: Guid.NewGuid(), Content: "x",
+                Scope: MemoryScope.Project, ScopeId: realId.ToString(),
+                Topic: null, Importance: 0.5,
+                RelatedFqns: Array.Empty<string>(),
+                CreatedAt: DateTimeOffset.UtcNow,
+                LastAccessedAt: DateTimeOffset.UtcNow, AccessCount: 0)));
+        var repoStore = TestHelpers.BuildRepoStore(
+            TestHelpers.MakeRepo("RealProject", id: realId));
+
+        await MemoryTools.SaveMemory(
+            content: "x",
+            scope: MemoryScope.Project,
+            repository: "RealProject",
+            scopeId: wrongId.ToString(),    // should be ignored
+            store: store, embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), repoStore: repoStore,
+            options: Opts(true));
+
+        await store.Received(1).SaveAsync(
+            Arg.Any<string>(), MemoryScope.Project, realId.ToString(),
+            Arg.Any<string?>(), Arg.Any<double>(),
+            Arg.Any<IReadOnlyList<string>?>(), Arg.Any<float[]?>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SaveMemory_InvalidUuidScopeId_ReturnsError()
+    {
+        var repoStore = TestHelpers.BuildRepoStore();
+
+        var result = await MemoryTools.SaveMemory(
+            content: "x",
+            scope: MemoryScope.Project,
+            scopeId: "not-a-uuid-at-all",
+            store: BuildStore(), embeddings: BuildEmbeddings(),
+            secrets: BuildScanner(), repoStore: repoStore,
+            options: Opts(true));
+
+        Assert.Contains("not a valid UUID", result);
+        Assert.Contains("`repository`", result);
     }
 }
