@@ -12,6 +12,16 @@ Versioning notes:
 
 ## [Unreleased]
 
+_No pending changes._
+
+## [0.8.4] — 2026-04-19
+
+Focus: **help AI agents self-configure auto-start + sync public docs with v0.8.0–0.8.3 feature adds**.
+
+Two operational findings from v0.8.3 smoke use drove this release:
+(1) The VS Code tasks.json auto-start trick added to the runbook in v0.8.3 was never surfaced to AI assistants during `ActivateAgent` — they had no way to install it without the user first reading docs.
+(2) A drift audit found 8 public-facing docs still referencing "26 tools" (the pre-v0.8.0 count) and none documenting the staleness labels or repository-name resolution for memory tools.
+
 ### Changed
 
 - **Doc-sync pass** — public-facing docs caught up with v0.8.0–0.8.3 feature adds.
@@ -292,7 +302,8 @@ Initial public release.
 - 693 tests passing (~85% coverage).
 - GitHub Release: agent tarballs for linux-x64 / win-x64 / osx-x64 + SHA256SUMS.
 
-[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/DT-Tuan/cortexplexus/compare/v0.8.0...v0.8.1
