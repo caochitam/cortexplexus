@@ -87,7 +87,7 @@ AI coding assistants (Claude, Cursor, Copilot) đọc codebase như văn bản t
 | Self-hosted | Không | Không | Có (Enterprise) | **Có (miễn phí)** |
 | Roslyn deep C# | Không | Không | Không | **Có** |
 | Knowledge Graph (không phải text) | Không | Không | Có | **Có** |
-| MCP native | Không | 1 phần | Không | **Có (26 tool)** |
+| MCP native | Không | 1 phần | Không | **Có (30 tool)** |
 | Chi phí năm / 20 dev | ~$5,000 | ~$5,000 | $10,000+ | **$0** |
 
 ---
@@ -100,7 +100,7 @@ cd cortexplexus
 docker compose up -d
 ```
 
-Thêm `.mcp.json` ở gốc dự án của bạn, trỏ `http://localhost:8080/mcp`, restart IDE, và agent của bạn đã có 26 tool code intelligence. Toàn bộ source code vẫn ở máy bạn — Local Agent chỉ upload metadata.
+Thêm `.mcp.json` ở gốc dự án của bạn, trỏ `http://localhost:8080/mcp`, restart IDE, và agent của bạn đã có 30 tool code intelligence. Toàn bộ source code vẫn ở máy bạn — Local Agent chỉ upload metadata.
 
 ---
 

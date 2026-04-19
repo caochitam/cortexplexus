@@ -90,7 +90,7 @@ To answer "what calls `ProcessOrder`?", today's agent does:
 | Self-hosted | — | — | Enterprise | **Free** |
 | Roslyn-deep C# | — | — | — | **Yes** |
 | Knowledge Graph | — | — | Yes | **Yes** |
-| MCP-native | — | Partial | — | **26 tools** |
+| MCP-native | — | Partial | — | **30 tools** |
 | Source code stays local | — | — | Depends | **Always** |
 | Cost / 20 devs / yr | ~$5K | ~$5K | $10K+ | **$0** |
 
@@ -122,7 +122,7 @@ cd cortexplexus
 docker compose up -d
 ```
 
-Then drop `.mcp.json` in your project root, restart your IDE, and your agent has 26 tools.
+Then drop `.mcp.json` in your project root, restart your IDE, and your agent has 30 tools.
 
 **Links**
 - Repo: https://github.com/DT-Tuan/CortexPlexus

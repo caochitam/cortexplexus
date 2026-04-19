@@ -138,7 +138,7 @@ You can also open this file from inside Antigravity: Agent panel `...` → **MCP
 
 After creating the file, **restart your IDE session** — no client hot-reloads MCP config.
 
-> **Full MCP guide with all 26 tools, usage examples, and troubleshooting:**
+> **Full MCP guide with all 30 tools, usage examples, and troubleshooting:**
 > **[`docs/MCP-GUIDE.md`](docs/MCP-GUIDE.md)** — read this after connecting your IDE.
 
 ---
@@ -200,10 +200,19 @@ After creating the file, **restart your IDE session** — no client hot-reloads 
 - `onboard_project` — full project overview in 1 call
 
 ### Indexing / agent / help
-- `activate_agent` — install + run the local indexing agent
+- `activate_agent` — install + run the local indexing agent (includes VS Code auto-start recipe for AI)
 - `index_from_local` / `index_from_git` — server-side indexing
-- `list_repositories` — indexed repos with last-indexed timestamp
-- `get_help` — usage guide
+- `list_repositories` — indexed repos + staleness warnings (`⚠️ STALE` when >24h old, `🚨 VERY STALE` when >7d)
+- `get_help` — usage guide (topics: quick-start, tools, indexing, strategies, memory)
+
+### Agent memory (opt-in, v0.8.0)
+Requires `Memory__Enabled=true`. Semantic, scoped, Weibull-decayed store. See [docs/MEMORY-SYSTEM.md](docs/MEMORY-SYSTEM.md).
+- `save_memory` — store a preference / pattern / decision / bug note with per-topic decay
+- `recall_memory` — semantic retrieval scoped to session / project / global
+- `list_memories` — audit + management (no embedding cost)
+- `forget_memory` — delete by id
+
+All three project-scoped memory tools accept either `repository` NAME or `scopeId` UUID — repository name is resolved server-side and is the recommended form for AI agents.
 
 ## Architecture
 
@@ -217,7 +226,7 @@ After creating the file, **restart your IDE session** — no client hot-reloads 
 ┌────────────────┴────────────────────────┐
 │   CortexPlexus.App (.NET 10 monolith)   │
 │                                          │
-│  • MCP Server (26 tools)                 │
+│  • MCP Server (30 tools)                 │
 │  • REST API (10 endpoints)               │
 │  • Roslyn parser (C# deep)               │
 │  • Tree-sitter parsers (8 languages)     │

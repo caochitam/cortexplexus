@@ -87,7 +87,7 @@ AI coding assistants (Claude, Cursor, Copilot) read your codebase as plain text 
 | Self-hosted | No | No | Yes (Enterprise) | **Yes (free)** |
 | Roslyn deep C# | No | No | No | **Yes** |
 | Knowledge Graph (beyond text) | No | No | Yes | **Yes** |
-| MCP native | No | Partial | No | **Yes (26 tools)** |
+| MCP native | No | Partial | No | **Yes (30 tools)** |
 | Annual cost / 20 devs | ~$5,000 | ~$5,000 | $10,000+ | **$0** |
 
 ---

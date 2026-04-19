@@ -12,6 +12,22 @@ Versioning notes:
 
 ## [Unreleased]
 
+### Changed
+
+- **Doc-sync pass** — public-facing docs caught up with v0.8.0–0.8.3 feature adds.
+  Tool count references updated from **26 → 30** in: `README.md` (banner + ASCII
+  diagram), `docs/MCP-GUIDE.md` section 5, `docs/INTRODUCTION.md`,
+  `docs/INTRODUCTION-VI.md`, `docs/PITCH-DECK.md`.
+  `MCP-GUIDE.md` now carries the **Memory tools sub-section** (4 tools, repository
+  NAME vs UUID addressing, pointer to `MEMORY-SYSTEM.md`) and a new **Staleness
+  warnings (§5b)** section explaining the `⚠️ STALE` / `🚨 VERY STALE` labels
+  and the response pattern AI agents should follow.
+  `docs/AGENT-TEMPLATE.md` rewritten: now a 5-step playbook (check MCP → activate
+  agent → read staleness → use 30 tools → memory workflow) instead of the 3-step
+  version that predated v0.8.0.
+- **`smoke-release` skill** — Step 5 expected tool count updated to 30 (was 26,
+  a false-fail as of v0.8.0).
+
 ### Added
 
 - **`ActivateAgent` output now includes Step 8 — VS Code auto-start recipe**

@@ -167,9 +167,9 @@ The Health line on every entry is your early-warning signal: `OK` means the repo
 
 ---
 
-## 5. Tool Quick Reference (26 tools)
+## 5. Tool Quick Reference (30 tools)
 
-For detailed parameters and examples, call `GetHelp("tools")`.
+For detailed parameters and examples, call `GetHelp("tools")`. For the memory-tools playbook specifically, call `GetHelp("memory")`.
 
 ```
 INDEXING          ActivateAgent · IndexFromLocal · IndexFromGit
@@ -182,7 +182,51 @@ GRAPH             GetCallers · GetCallees · GetDependencies
 CODE QUALITY      GetTestCoverage · GetConfigUsage · GetDeadCode
                   GetMiddlewarePipeline · GetCircularDependencies
 OVERVIEW          ListRepositories · GetHelp
+MEMORY (opt-in)   SaveMemory · RecallMemory · ListMemories · ForgetMemory
 ```
+
+### Memory tools (v0.8.0, opt-in)
+
+Memory is **disabled by default**. `ListRepositories()` shows a footer line — if `Memory: disabled`, the tools return a clear error telling the user how to enable (`Memory__Enabled=true` on the server). Don't retry blind.
+
+When enabled, use memory to persist things **not derivable from code**: user preferences, project conventions, bug notes, decisions. Don't dump chat state or duplicate facts the graph already knows. See [`MEMORY-SYSTEM.md`](MEMORY-SYSTEM.md) for the full decay model (Weibull, topic-specific half-lives) and ADRs 010-013 for the design rationale.
+
+The 4 memory tools at a glance:
+
+| Tool | Purpose | Required args | Typical call |
+|------|---------|---------------|--------------|
+| `SaveMemory` | Store a memory | `content`, `scope` | `SaveMemory(content:"Team uses Result<T>", scope:"project", repository:"backend", topic:"preference")` |
+| `RecallMemory` | Semantic retrieval | `query` | `RecallMemory(query:"error handling", scope:"project", repository:"backend")` |
+| `ListMemories` | Audit (no embedding cost) | — | `ListMemories(scope:"project", repository:"backend")` |
+| `ForgetMemory` | Delete by id | `id` | `ForgetMemory(id:"<uuid>")` |
+
+**Repository addressing (v0.8.3+)** — for project-scoped memory tools, pass `repository: "<name>"` instead of the raw UUID. The server resolves via `RepoResolver`, which uses the same tie-break logic as search tools. `scopeId` UUID still works for power users but the name is preferred for AI agents — no lookup table, no UUID typos.
+
+---
+
+## 5b. Staleness warnings (v0.8.3+)
+
+CortexPlexus tracks when each repo was last indexed and surfaces warnings to you automatically:
+
+| Age | Label | Means |
+|-----|-------|-------|
+| < 6h | (no label) | Fresh — trust results |
+| 6–24h | `"N hours ago"` plain | Informational only |
+| 1–7 days | `⚠️ STALE` | Results may miss recent changes — recommend user re-index |
+| > 7 days | `🚨 VERY STALE` | Unreliable — strongly recommend re-index before acting on results |
+| never | `(never)` | Registered but not yet indexed |
+
+Where you'll see them:
+
+- **`ListRepositories()`** — inline next to each repo's `Last indexed:` line.
+- **`SearchCode` / `SemanticSearch` / `ExploreTopic` footer** — appended when the searched repo is ≥ 1 day stale. Paraphrase to the user; don't claim results are authoritative when the footer says otherwise.
+- **`ActivateAgent` pre-check** — if the project was indexed before and is now stale, the recipe leads with a warning block so you know the agent will re-sync on start.
+
+Response pattern when you see a staleness label:
+
+> "Results below are from an index that's N days old. If you want me to refresh first, I can run `ActivateAgent(...)` — takes a few minutes depending on the change volume."
+
+Then let the user decide. Don't auto-reindex without asking — a full re-index can take 5-25 minutes and burns Ollama capacity.
 
 **Languages:** C# (Roslyn deep semantic), TypeScript, JavaScript, Python, Java, Go, Rust, PHP (Tree-sitter)
 
