@@ -73,13 +73,59 @@ The server's `ISecretsScanner` (the `BasicSecretsScanner` shipped with the platf
 
 ## Tune the embedding throughput
 
-Ollama with `nomic-embed-text` is single-threaded by default and gives ~4–5 embeddings/second on a typical desktop CPU. For a 5,000-symbol repo that's around 5–7 minutes just on embedding.
+Ollama's `nomic-embed-text` (default) gives ~20 embeddings/second on a typical desktop CPU. For a 5,000-symbol repo that's ~4 minutes just on embedding. The v0.9.0 [benchmark harness](../../tests/CortexPlexus.Embedding.Benchmarks/) measured this and three alternative models on `ollama/ollama:0.20.0` with a 500-string synthetic corpus:
 
-Faster options (in increasing order of cost and complexity):
+| Model | Dim | texts/s | vs default | Verdict |
+|-------|----:|--------:|-----------:|---------|
+| **`nomic-embed-text`** (default) | 768 | 21 | 1.0× | baseline |
+| `mxbai-embed-large` | 1024 | 5.6 | 0.27× | **avoid** — 3.7× slower |
+| `snowflake-arctic-embed:s` | 384 | 56 | **2.7×** | recommended for throughput, retrieval-tuned |
+| `all-minilm` | 384 | **102** | **4.9×** | fastest, but general-purpose (not retrieval-tuned) |
 
-1. **Increase `OLLAMA_NUM_PARALLEL`** on the Ollama server, then bump `MaxParallelBatches` in `.env` to match. The default `1` is conservative.
-2. **Switch to Google Gemini** — set `EMBEDDING_PROVIDER=gemini` and `GEMINI_API_KEY` in `.env`. Free tier handles ~50 RPM, paid tier scales linearly.
-3. **Run Ollama on a GPU host** — same model, 5–10× faster.
+Raw results: [`docs/benchmark-results/model-sweep-20260420.md`](../benchmark-results/model-sweep-20260420.md). Measured on a local PC (Windows + Docker); a GPU host will push these linearly higher.
+
+### Which model to pick
+
+- **Stay on `nomic-embed-text`** if you've already indexed — switching models means re-embedding every symbol (different dim → vectors incompatible). Only switch on a fresh install or if you're willing to force-reindex.
+- **Switch to `snowflake-arctic-embed:s`** if you want ~2.7× throughput AND retrieval quality close to `nomic`. It's explicitly trained for search/RAG workloads.
+- **Switch to `all-minilm`** only if you need maximum throughput and recall quality is secondary (it's a general-purpose model, not retrieval-specialized).
+- **Avoid `mxbai-embed-large`** — larger parameter count makes it 3.7× slower on CPU-only Ollama, despite its MTEB ranking.
+
+To switch, edit `.env` and force a re-index:
+
+```bash
+# .env on the server
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_OLLAMA_MODEL=snowflake-arctic-embed:s
+EMBEDDING_DIMENSIONS=384   # MUST match the model's native dim
+
+# On the server
+docker exec cortexplexus-local-ollama ollama pull snowflake-arctic-embed:s
+docker compose restart cortexplexus
+
+# From any MCP client (clears file-hash cache so agent re-embeds everything)
+force_reindex(name="<your-repo-name>")
+```
+
+### Parallelism (why it doesn't help on Ollama)
+
+`MaxParallelBatches` defaults to `1` for Ollama, `4` for Gemini. Do **not** raise the Ollama default — three independent measurements (R17 on LXC, v0.9.0 Wave 1 on LXC, v0.9.0 Wave 1 on local PC) showed parallel=4 gives identical wall-time to parallel=1 on `nomic-embed-text`, because Ollama's model loader is effectively single-threaded for CPU inference. Raising parallelism just wastes CPU context-switches without speedup. Gemini's rate-limit is per-request-count, so parallelism IS free throughput there.
+
+### Other faster options
+
+1. **Switch to Google Gemini** — set `EMBEDDING_PROVIDER=gemini` and `GEMINI_API_KEY` in `.env`. Free tier handles ~50 RPM, paid tier scales linearly.
+2. **Run Ollama on a GPU host** — same model, 5–10× faster.
+3. **Pause other watch agents during bulk re-index** — if you run multiple agents from one machine, their concurrent embedding upload contends on the same Ollama instance. Measured cost of concurrent CortexFlow+CortexPlexus watch: ~40% slowdown on parallel-4 scenarios (v0.9.0 Wave 1 finding).
+
+### Infrastructure health matters more than code
+
+Before blaming the embedding provider, check the host where Ollama runs:
+
+```bash
+ssh user@host 'uptime; free -h; top -bn1 | head -10'
+```
+
+High load average + high `%wa` (iowait) means neighbor workloads are stealing the I/O subsystem — no code change will recover that. v0.9.0's driving finding was that a contested LXC was 6× slower than its own R17 baseline, with zero code or config drift.
 
 The HNSW bulk-load optimization (drop / rebuild for batches ≥ 500 symbols) handles the vector-store side; the bottleneck is purely the embedding provider's throughput.
 

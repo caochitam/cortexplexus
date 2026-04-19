@@ -171,6 +171,51 @@ Only if Wave 1 finds Ollama has updated to genuinely support concurrent requests
 
 ## 10. Sign-off checklist
 
-- [ ] User confirms "measure first, ship only what measurement supports" approach.
-- [ ] User OKs spending ~2-3h on Wave 1 harness + ~30 min runtime for full sweep before any code change.
-- [ ] User confirms scope — no model swap as default, no inference-backend swap.
+- [x] User confirms "measure first, ship only what measurement supports" approach. (2026-04-19)
+- [x] User OKs spending ~2-3h on Wave 1 harness + ~30 min runtime for full sweep before any code change.
+- [x] User confirms scope — no model swap as default, no inference-backend swap.
+
+---
+
+## 11. Actual outcome — Wave 1 and Wave 2 log (2026-04-19 → 04-20)
+
+### Wave 1 — measurement harness + gate 1
+
+**Shipped**: `tests/CortexPlexus.Embedding.Benchmarks/` (custom harness, ~200 LoC C#, markdown output). Committed `d20075f`.
+
+**R17 repro on LXC**: **FAILED gate** — all 3 scenarios ~6× slower than R17 (4.6 texts/s vs 29/s). Isolating watch agents removed only the parallel-4 contention noise; baseline regression remained. RAM upgrade 1 GiB → 2 GiB on LXC did not recover. Root cause diagnosed via `top -bn1` + `iostat`: persistent **67.7% CPU iowait with 0% user CPU and ~10% disk util** — classic signature of Proxmox-host-level I/O contention from neighbor VMs, outside the LXC's control.
+
+**Pivot**: split local-dev env from release env. `local-dev/docker-compose.yml` runs Ollama 0.20.0 (same image as LXC) on this PC. R17 repro on local measured ~21 texts/s — 1.4× slower than R17 (hardware-noise band), ~4.5× faster than the contested LXC. **Local is now the benchmark environment; LXC is release-only.** Committed `f5fcf28`. See `docs/LOCAL-DEV-SETUP.md`.
+
+### Wave 2 — Candidate B model sweep
+
+**Ran**: 4 models × batch 100 × parallel 1 × 500 texts on local. Results in `docs/benchmark-results/model-sweep-20260420.md`:
+
+| Model | Dim | texts/s | vs default |
+|-------|----:|--------:|-----------:|
+| `nomic-embed-text` (default) | 768 | 20.9 | 1.0× |
+| `mxbai-embed-large` | 1024 | 5.6 | **0.27× — avoid** |
+| `snowflake-arctic-embed:s` | 384 | 56.2 | **2.7× ✅** |
+| `all-minilm` | 384 | 101.9 | **4.9× ✅** |
+
+**Decision**: ship Candidate B as **doc-only recommendation** in `docs/runbooks/agent-best-practices.md`. `snowflake-arctic-embed:s` gets the primary recommendation (2.7× faster + retrieval-tuned); `all-minilm` as a secondary option for max-throughput-over-quality workloads. `nomic-embed-text` remains the default — existing deployments should only switch if they accept a one-time force-reindex (384-dim ≠ 768-dim). `mxbai-embed-large` explicitly disqualified.
+
+### Candidate status summary
+
+| Candidate | Plan verdict | Actual result |
+|-----------|-------------|---------------|
+| A — wire `MaxBatchSize` through | considered if ≥1.3× at batch 100 | **REJECT** — batch 50 vs 200 both 21/s on local (0× gain) |
+| B — model swap doc | considered if new model ≥1.5× | **SHIP** — snowflake-arctic 2.7×, all-minilm 4.9× |
+| C — document concurrent-watch penalty | considered if measured | **SHIP** — confirmed ~18s overhead on parallel=4 scenarios |
+| D — sharded Ollama | rejected unless nothing else works | **still rejected** — B clears the gate |
+| E — raise parallelism default | rejected unless R17 inverts | **confirmed rejected** — 3 independent repros show 0 speedup |
+
+### Wave 3 — what v0.9.0 actually ships
+
+- Benchmark harness (already committed)
+- Split dev/release env + `docs/LOCAL-DEV-SETUP.md` (already committed)
+- Runbook rewrite: `docs/runbooks/agent-best-practices.md` §Tune embedding throughput with measured table + recommendations + anti-patterns
+- Updated this PLAN with §11 outcome log
+- Tag v0.9.0 once the runbook + this PLAN are reviewed
+
+**No app code change ships in v0.9.0.** That is correct — measurement showed none was justified. The diagnostic + operational guidance is the deliverable.
