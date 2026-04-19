@@ -109,6 +109,11 @@ public sealed class AgentTools
         var runningCheck = isWindows
             ? "tasklist /FI \"IMAGENAME eq dotnet.exe\" /FO CSV 2>/dev/null | grep -i cortexplexus-agent || echo NOT_RUNNING"
             : "pgrep -f cortexplexus-agent || echo NOT_RUNNING";
+        // VS Code tasks.json uses its own env-var syntax (`${env:VAR}`),
+        // distinct from the shell-style `$VAR` we use for the Bash snippets.
+        var vscodeAgentDll = isWindows
+            ? "${env:USERPROFILE}/.cortexplexus/agent/cortexplexus-agent.dll"
+            : "${env:HOME}/.cortexplexus/agent/cortexplexus-agent.dll";
 
         // Output is structured as a decision tree so an AI agent can parse it
         // linearly and each step has a clear PASS/FAIL signal.
@@ -224,6 +229,68 @@ public sealed class AgentTools
             ```
             **If REGISTERED**: call `ListRepositories()` from your MCP client — look for `Health: OK` on the `{{name}}` entry. If it says `PARTIAL` / `DEGRADED` / `EMPTY`, indexing is incomplete and queries may miss hits.
             **If NOT_REGISTERED**: the server never received anything; re-check `curl {{server}}/api/agent/version` and `tail /tmp/cortexplexus-agent-{{name}}.log`.
+
+            ## Step 8 — (Optional, highly recommended) Auto-start on VS Code folder open
+
+            The #1 cause of "I searched and got stale results" is the user opening VS Code
+            and forgetting to run watch. Wire it up once, never think about it again.
+
+            ### AI procedure — execute via your file-edit tools
+
+            1. Read `{{projectPath}}/.vscode/tasks.json`.
+               - **Missing** → write the snippet below verbatim (placeholders already filled).
+               - **Exists** → parse the JSON. If `tasks` already contains an object whose
+                 `label` is `"CortexPlexus: start watch"`, do nothing (already configured).
+                 Otherwise, append our task object to the `tasks` array and write back —
+                 preserve every existing task the user has.
+            2. Report to the user in one sentence:
+               *"Added a VS Code task that auto-starts the watch agent on folder open.
+               Reload the window (Ctrl+Shift+P → 'Developer: Reload Window') once to
+               pick it up; subsequent opens are automatic."*
+            3. Do **not** trigger the task yourself in this session — reloading is the
+               user's action, and Step 6 above already started watch for the current
+               session anyway.
+
+            ### tasks.json — exact content for {{platformTag}}
+
+            ```jsonc
+            {
+              "version": "2.0.0",
+              "tasks": [
+                {
+                  "label": "CortexPlexus: start watch",
+                  "type": "shell",
+                  "command": "dotnet",
+                  "args": [
+                    "{{vscodeAgentDll}}",
+                    "watch",
+                    "${workspaceFolder}",
+                    "--server", "{{server}}",
+                    "--name", "${workspaceFolderBasename}"
+                  ],
+                  "isBackground": true,
+                  "runOptions": { "runOn": "folderOpen" },
+                  "presentation": {
+                    "reveal": "silent",
+                    "panel": "dedicated",
+                    "showReuseMessage": false,
+                    "close": false
+                  },
+                  "problemMatcher": []
+                }
+              ]
+            }
+            ```
+
+            ### What this does NOT do — be honest with the user
+
+            - **Not reboot-survival when VS Code is closed.** Task dies with the editor.
+              For 24/7 watch, the user needs systemd / Task Scheduler / NSSM. Point them
+              at `docs/runbooks/agent-auto-start.md` in the CortexPlexus repo.
+            - **VS Code specific.** Rider / Neovim / Cursor users need an OS-level
+              supervisor from the same runbook.
+            - **No effect this session.** The new task fires on the *next* folder-open
+              (or reload). Don't promise the user their index will refresh right now.
 
             ---
 

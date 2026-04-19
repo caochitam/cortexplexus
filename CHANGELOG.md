@@ -12,7 +12,22 @@ Versioning notes:
 
 ## [Unreleased]
 
-_No pending changes._
+### Added
+
+- **`ActivateAgent` output now includes Step 8 — VS Code auto-start recipe**
+  (`src/CortexPlexus.App/Mcp/Tools/AgentTools.cs`). When the AI client calls
+  `ActivateAgent`, the returned recipe ends with a platform-aware `.vscode/tasks.json`
+  snippet (pre-filled with the detected `serverUrl` and platform-correct
+  `${env:USERPROFILE}` / `${env:HOME}` path), plus a step-by-step "read → merge or
+  create → report" procedure so AI agents in other projects can wire up
+  `runOn: folderOpen` auto-start without manual input. Closes the common pain of
+  "I forgot to start watch in VS Code and now my index is 3 days stale" by letting
+  the assistant install the fix once per project. Honest about limitations:
+  points users at `docs/runbooks/agent-auto-start.md` for reboot-level supervisors
+  (systemd / Task Scheduler / NSSM) on non-VS-Code editors. +5 unit tests.
+- **`.vscode/tasks.json`** committed-local in CortexPlexus repo itself (`.vscode/`
+  is already gitignored) so opening this repo in VS Code re-syncs the agent
+  automatically — dogfooding the guidance above.
 
 ## [0.8.3] — 2026-04-19
 
