@@ -19,6 +19,7 @@
     <Project Path="tests/CortexPlexus.Mcp.Tests/CortexPlexus.Mcp.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Api.Tests/CortexPlexus.Api.Tests.csproj" />
     <Project Path="tests/CortexPlexus.Embedding.Tests/CortexPlexus.Embedding.Tests.csproj" />
+    <Project Path="tests/CortexPlexus.Embedding.Benchmarks/CortexPlexus.Embedding.Benchmarks.csproj" />
     <Project Path="tests/CortexPlexus.Agent.Tests/CortexPlexus.Agent.Tests.csproj" />
     <Project Path="tests/CortexPlexus.App.Tests/CortexPlexus.App.Tests.csproj" />
   </Folder>
