@@ -1,0 +1,66 @@
+# Local dev stack — isolated from LXC production (192.168.50.14).
+# Purpose: run Ollama + Postgres on this PC for benchmarking + experimentation
+# without the Proxmox-host I/O contention that throttles the LXC deployment.
+#
+# Naming: everything prefixed "cortexplexus-local-" to distinguish from any
+# future `docker compose` run in the repo root (which deploys the production
+# image set).
+#
+# Ports are offset from production:
+#   Ollama     11434 → 11434   (same — no conflict because LXC is remote)
+#   Postgres    5432 → 15432
+#   CortexPlexus App (future)  8080 → 18080
+#
+# Usage from repo root:
+#   cd local-dev
+#   docker compose up -d ollama            # just Ollama
+#   docker compose up -d                    # Ollama + Postgres (full stack)
+#   docker compose pull ollama && docker compose up -d ollama   # refresh Ollama image
+#   docker compose down                     # stop, keep volumes
+#   docker compose down -v                  # nuke (wipe pgdata + ollama models)
+
+name: cortexplexus-local
+
+services:
+  ollama:
+    image: ollama/ollama:0.20.0
+    container_name: cortexplexus-local-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: ghcr.io/dt-tuan/cortexplexus-postgres:main
+    container_name: cortexplexus-local-postgres
+    restart: unless-stopped
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata-local:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=cortexplexus
+      - POSTGRES_PASSWORD=cortexplexus
+      - POSTGRES_DB=cortexplexus
+    profiles:
+      - full-stack   # opt-in — only starts with `docker compose --profile full-stack up -d`
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cortexplexus -d cortexplexus"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ollama-models:
+    name: cortexplexus-local-ollama-models
+  pgdata-local:
+    name: cortexplexus-local-pgdata
