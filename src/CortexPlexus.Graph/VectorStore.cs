@@ -55,6 +55,27 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
             .ToList();
         if (symbolList.Count == 0) return VectorUpsertResult.Empty;
 
+        // R27-1 fail-loud backstop: a symbol with null/empty RepoId would coerce to
+        // Guid.Empty below and violate code_symbols_repo_id_fkey, taking down its whole
+        // 200-row batch. Drop these loudly instead of silently corrupting the batch.
+        // Root cause is always an upstream RepoId-assignment gap (e.g. a CodeSymbol
+        // subtype missing from IndexingPipeline.SetRepoId). After that fix this should
+        // never fire — it exists to surface any future regression as a warning + a
+        // non-zero Failed count rather than a mysterious whole-batch drop.
+        var missingRepo = symbolList.Where(s => s.RepoId is null || s.RepoId == Guid.Empty).ToList();
+        var droppedNoRepo = missingRepo.Count;
+        if (droppedNoRepo > 0)
+        {
+            logger.LogWarning(
+                "Vector upsert: dropping {Count} symbol(s) with missing RepoId (would violate FK). " +
+                "First offenders: {Fqns}. This indicates an upstream RepoId-assignment gap.",
+                droppedNoRepo,
+                string.Join(", ", missingRepo.Take(5).Select(s => $"{s.Kind}:{s.Fqn}")));
+            symbolList = symbolList.Where(s => s.RepoId is not null && s.RepoId != Guid.Empty).ToList();
+            if (symbolList.Count == 0)
+                return new VectorUpsertResult(Persisted: 0, Failed: droppedNoRepo, VectorRowsWritten: 0);
+        }
+
         // Count symbols that will actually hit the HNSW index (non-null, non-empty vector).
         var embeddedCount = symbolList.Count(s =>
             embeddings.TryGetValue(s.Fqn, out var v) && v.Length > 0);
@@ -118,7 +139,7 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
                 : Math.Max(0, withVectorInput - failCount);
             return new VectorUpsertResult(
                 Persisted: symbolList.Count - failCount,
-                Failed: failCount,
+                Failed: failCount + droppedNoRepo,
                 VectorRowsWritten: vectorRowsWritten);
         }
         finally
@@ -277,7 +298,10 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
             cmd.Parameters.AddWithValue($"@fp{i}", (object?)symbol.FilePath ?? DBNull.Value);
             cmd.Parameters.AddWithValue($"@sl{i}", (object?)symbol.StartLine ?? DBNull.Value);
             cmd.Parameters.AddWithValue($"@el{i}", (object?)symbol.EndLine ?? DBNull.Value);
-            cmd.Parameters.AddWithValue($"@rid{i}", symbol.RepoId ?? Guid.Empty);
+            // RepoId is guaranteed non-null/non-empty by the fail-loud filter in
+            // UpsertAsync — never coerce to Guid.Empty here (that was the silent
+            // FK-violation path, R27-1).
+            cmd.Parameters.AddWithValue($"@rid{i}", symbol.RepoId!.Value);
             cmd.Parameters.AddWithValue($"@doc{i}", (object?)symbol.Documentation ?? DBNull.Value);
             cmd.Parameters.AddWithValue($"@sum{i}", (object?)symbol.AiSummary ?? DBNull.Value);
             cmd.Parameters.AddWithValue($"@test{i}", symbol is MethodInfo m ? m.IsTestMethod : false);

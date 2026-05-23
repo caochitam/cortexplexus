@@ -32,15 +32,46 @@ internal static class EmbeddingBatchHelper
         if (symbols.Count == 0)
             return new Dictionary<string, float[]>();
 
+        // 0. Deduplicate by FQN (keep last) — mirrors VectorStore.UpsertAsync. Method
+        // overloads share an FQN (the Roslyn display format omits parameters) and partial
+        // classes recur across files; without this they'd be embedded repeatedly (wasted
+        // Ollama calls) and, because the result is keyed by FQN, collapse into one entry —
+        // which the caller's `embeddable.Count - embeddings.Count` then miscounts as
+        // embedding failures (R27-2).
+        var distinctSymbols = symbols
+            .GroupBy(s => s.Fqn)
+            .Select(g => g.Last())
+            .ToList();
+
         // 1. Build (fqn, text) list — sanitized for secrets.
-        var texts = new List<(string Fqn, string Text)>(symbols.Count);
-        foreach (var symbol in symbols)
+        var texts = new List<(string Fqn, string Text)>(distinctSymbols.Count);
+        var skippedEmpty = 0;
+        foreach (var symbol in distinctSymbols)
         {
             var text = BuildEmbeddingText(symbol);
             if (symbol.Documentation is not null)
                 text += $"\n{symbol.Documentation}";
-            texts.Add((symbol.Fqn, secretsScanner.Sanitize(text)));
+            var sanitized = secretsScanner.Sanitize(text);
+
+            // R27-2: never send empty/whitespace text to the embedding backend — Ollama
+            // returns an empty vector for blank input, which EmbedBatchAsync→result then
+            // miscounts as an embedding failure. These symbols genuinely have nothing to
+            // embed; skip them up front so they don't pollute the failure signal.
+            if (string.IsNullOrWhiteSpace(sanitized))
+            {
+                skippedEmpty++;
+                continue;
+            }
+            texts.Add((symbol.Fqn, sanitized));
         }
+
+        if (skippedEmpty > 0)
+            logger.LogInformation(
+                "Embedding: skipped {Count} symbol(s) with empty text after sanitization (nothing to embed)",
+                skippedEmpty);
+
+        if (texts.Count == 0)
+            return new Dictionary<string, float[]>();
 
         // 2. Slice into fixed-size batches.
         var batches = new List<List<(string Fqn, string Text)>>();
@@ -100,6 +131,18 @@ internal static class EmbeddingBatchHelper
                 batchProgress?.Report((done, batches.Count));
             }
         });
+
+        // R27-2 diagnostic: surface symbols that were SENT but came back without a vector
+        // (Ollama returned an empty embedding, or a short batch response). Sampling the
+        // offenders makes the residual cause — oversize text, transient Ollama error, or a
+        // batch count mismatch — visible in logs on the next real index run.
+        var notEmbedded = texts.Where(t => !result.ContainsKey(t.Fqn)).ToList();
+        if (notEmbedded.Count > 0)
+            logger.LogWarning(
+                "Embedding: {Failed} of {Sent} sent symbol(s) returned no vector. " +
+                "Sample (fqn, text length): {Sample}",
+                notEmbedded.Count, texts.Count,
+                string.Join("; ", notEmbedded.Take(5).Select(t => $"{t.Fqn} (len={t.Text.Length})")));
 
         return new Dictionary<string, float[]>(result);
     }

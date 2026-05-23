@@ -286,4 +286,90 @@ public class EmbeddingBatchHelperTests
         Assert.NotNull(seenTexts);
         Assert.All(seenTexts, t => Assert.Equal("[REDACTED]", t));
     }
+
+    // === R27-2: empty/whitespace text after sanitization is skipped (not sent, not failed) ===
+    [Fact]
+    public async Task GenerateEmbeddingsAsync_EmptyTextAfterSanitize_SkippedNotSent()
+    {
+        var symbols = Enumerable.Range(0, 3).Select(MakeMethod).Cast<CodeSymbol>().ToList();
+
+        // Scanner blanks Method1's text to whitespace (simulates content fully redacted
+        // or genuinely empty) — it must be skipped, never sent to the embedding backend.
+        var scanner = Substitute.For<ISecretsScanner>();
+        scanner.Sanitize(Arg.Any<string>())
+            .Returns(ci => ci.Arg<string>().Contains("Method1") ? "   " : ci.Arg<string>());
+
+        List<string>? seenTexts = null;
+        var embedding = Substitute.For<IEmbeddingService>();
+        embedding.EmbedBatchAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                seenTexts = ci.Arg<IEnumerable<string>>().ToList();
+                return Task.FromResult<IReadOnlyList<float[]>>(
+                    seenTexts.Select(_ => new[] { 0.1f }).ToList());
+            });
+
+        var result = await EmbeddingBatchHelper.GenerateEmbeddingsAsync(
+            symbols, embedding, scanner,
+            NullLogger.Instance, maxParallelBatches: 1, CancellationToken.None);
+
+        // Method1 skipped up front: only 2 texts sent, only 2 results.
+        Assert.NotNull(seenTexts);
+        Assert.Equal(2, seenTexts!.Count);
+        Assert.Equal(2, result.Count);
+        Assert.Contains("NS.Class.Method0", result.Keys);
+        Assert.DoesNotContain("NS.Class.Method1", result.Keys);
+        Assert.Contains("NS.Class.Method2", result.Keys);
+    }
+
+    // === R27-2: duplicate FQNs (method overloads / partial classes) dedup, not failures ===
+    [Fact]
+    public async Task GenerateEmbeddingsAsync_DuplicateFqns_DedupedNotFailed()
+    {
+        // Two symbols share an FQN — method overloads collapse because the Roslyn display
+        // format omits parameters. They must be sent once and counted once, not treated as
+        // an embedding failure (root cause of the R27-2 "69 of 1124 failed" miscount).
+        var dup1 = MakeMethod(0);
+        var dup2 = MakeMethod(0) with { Signature = "void Method0(int x)" }; // same Fqn
+        var other = MakeMethod(1);
+        var symbols = new List<CodeSymbol> { dup1, dup2, other };
+
+        List<string>? seenTexts = null;
+        var embedding = Substitute.For<IEmbeddingService>();
+        embedding.EmbedBatchAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                seenTexts = ci.Arg<IEnumerable<string>>().ToList();
+                return Task.FromResult<IReadOnlyList<float[]>>(
+                    seenTexts.Select(_ => new[] { 0.1f }).ToList());
+            });
+
+        var result = await EmbeddingBatchHelper.GenerateEmbeddingsAsync(
+            symbols, embedding, PassthroughScanner(),
+            NullLogger.Instance, maxParallelBatches: 1, CancellationToken.None);
+
+        Assert.NotNull(seenTexts);
+        Assert.Equal(2, seenTexts!.Count);   // 2 distinct FQNs sent, not 3
+        Assert.Equal(2, result.Count);
+        Assert.Contains("NS.Class.Method0", result.Keys);
+        Assert.Contains("NS.Class.Method1", result.Keys);
+    }
+
+    // === R27-2: all texts empty → no backend call, empty dict ===
+    [Fact]
+    public async Task GenerateEmbeddingsAsync_AllTextsEmpty_NoCallEmptyResult()
+    {
+        var symbols = Enumerable.Range(0, 5).Select(MakeMethod).Cast<CodeSymbol>().ToList();
+        var scanner = Substitute.For<ISecretsScanner>();
+        scanner.Sanitize(Arg.Any<string>()).Returns("   "); // everything blanks out
+
+        var embedding = Substitute.For<IEmbeddingService>();
+
+        var result = await EmbeddingBatchHelper.GenerateEmbeddingsAsync(
+            symbols, embedding, scanner,
+            NullLogger.Instance, maxParallelBatches: 4, CancellationToken.None);
+
+        Assert.Empty(result);
+        await embedding.DidNotReceive().EmbedBatchAsync(Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>());
+    }
 }

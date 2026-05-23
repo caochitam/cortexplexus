@@ -179,7 +179,12 @@ public sealed class IndexingPipeline(
         var embeddings = await GenerateEmbeddingsAsync(embeddable, ct, embedProgress);
 
         var embeddedCount = embeddings.Count;
-        var failedEmbeddings = embeddable.Count - embeddedCount;
+        // Count failures against DISTINCT FQNs: method overloads (the Roslyn FQN omits
+        // parameters) and partial classes share an FQN and collapse into one embedding
+        // entry, so the raw embeddable.Count over-reports failures (R27-2). embeddings is
+        // keyed by FQN, so embeddedCount is already distinct.
+        var distinctEmbeddable = embeddable.Select(s => s.Fqn).Distinct().Count();
+        var failedEmbeddings = distinctEmbeddable - embeddedCount;
         logger.LogInformation("Generated {Count} embeddings.", embeddedCount);
         if (failedEmbeddings > 0)
             logger.LogWarning("{Count} symbols failed to embed — semantic search will not cover them", failedEmbeddings);
@@ -336,17 +341,27 @@ public sealed class IndexingPipeline(
         return result;
     }
 
-    private static CodeSymbol SetRepoId(CodeSymbol symbol, Guid repoId) => symbol switch
+    // internal (not private) so IndexingPipelineTests can assert every CodeSymbol
+    // subtype gets a RepoId. The arms below must cover ALL concrete subtypes:
+    // a fall-through to `_ => symbol` leaves RepoId null, which VectorStore then
+    // coerces to Guid.Empty → code_symbols_repo_id_fkey violation that takes down
+    // the whole 200-row batch (R27-1; was previously masked by the missing
+    // FieldInfo/EventInfo/MiddlewareInfo/ConfigKeyInfo arms).
+    internal static CodeSymbol SetRepoId(CodeSymbol symbol, Guid repoId) => symbol switch
     {
         ClassInfo c => c with { RepoId = repoId },
         MethodInfo m => m with { RepoId = repoId },
         InterfaceInfo i => i with { RepoId = repoId },
         PropertyInfo p => p with { RepoId = repoId },
         ConstructorInfo c => c with { RepoId = repoId },
+        FieldInfo f => f with { RepoId = repoId },
+        EventInfo e => e with { RepoId = repoId },
         NamespaceInfo n => n with { RepoId = repoId },
         DbContextInfo d => d with { RepoId = repoId },
         DiRegistrationInfo d => d with { RepoId = repoId },
         ApiEndpointInfo a => a with { RepoId = repoId },
+        MiddlewareInfo m => m with { RepoId = repoId },
+        ConfigKeyInfo c => c with { RepoId = repoId },
         DocumentSection d => d with { RepoId = repoId },
         _ => symbol
     };

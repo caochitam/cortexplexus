@@ -1,4 +1,5 @@
 using CortexPlexus.App.Indexing;
+using CortexPlexus.Core.Models;
 
 namespace CortexPlexus.App.Tests;
 
@@ -318,5 +319,52 @@ public class IndexingPipelineTests
         // Test này tồn tại để catch regression nếu logic đổi (potential improvement cho tương lai).
         Assert.False(IndexingPipeline.IsExcludedPath("bin/file.cs".Replace('/', Path.DirectorySeparatorChar)));
         Assert.False(IndexingPipeline.IsExcludedPath("node_modules/lib.ts".Replace('/', Path.DirectorySeparatorChar)));
+    }
+
+    // === R27-1: SetRepoId must cover EVERY concrete CodeSymbol subtype ===
+    // A subtype that falls through to `_ => symbol` keeps RepoId null, which
+    // VectorStore then coerces to Guid.Empty → code_symbols_repo_id_fkey
+    // violation that drops the whole 200-row batch. Regression guard for the
+    // previously missing FieldInfo/EventInfo/MiddlewareInfo/ConfigKeyInfo arms.
+    [Fact]
+    public void SetRepoId_AllConcreteSubtypes_GetRepoId()
+    {
+        var repoId = Guid.NewGuid();
+        CodeSymbol[] samples =
+        [
+            new ClassInfo { Fqn = "N.C", Name = "C", Kind = "class" },
+            new MethodInfo { Fqn = "N.C.M", Name = "M", Kind = "method", Signature = "void M()" },
+            new InterfaceInfo { Fqn = "N.I", Name = "I", Kind = "interface" },
+            new PropertyInfo { Fqn = "N.C.P", Name = "P", Kind = "property", Type = "int" },
+            new ConstructorInfo { Fqn = "N.C..ctor", Name = ".ctor", Kind = "constructor", Signature = "C()" },
+            new FieldInfo { Fqn = "N.C.f", Name = "f", Kind = "field", Type = "int" },
+            new EventInfo { Fqn = "N.C.E", Name = "E", Kind = "event", Type = "EventHandler" },
+            new NamespaceInfo { Fqn = "N", Name = "N", Kind = "namespace" },
+            new DbContextInfo { Fqn = "N.Db", Name = "Db", Kind = "class" },
+            new DiRegistrationInfo
+            {
+                Fqn = "N.svc", Name = "svc", Kind = "di",
+                ServiceTypeFqn = "N.I", ImplementationTypeFqn = "N.C", Lifetime = "Scoped"
+            },
+            new ApiEndpointInfo { Fqn = "GET /x", Name = "x", Kind = "endpoint", HttpMethod = "GET", RouteTemplate = "/x" },
+            new MiddlewareInfo { Fqn = "N.Mw", Name = "Mw", Kind = "middleware", Order = 0 },
+            new ConfigKeyInfo { Fqn = "Key:A", Name = "A", Kind = "config", Provider = "appsettings" },
+            new DocumentSection { Fqn = "doc:r.md#h", Name = "h", Kind = "section", Content = "x", DocumentPath = "r.md" },
+        ];
+
+        foreach (var s in samples)
+        {
+            var result = IndexingPipeline.SetRepoId(s, repoId);
+            Assert.Equal(repoId, result.RepoId);
+        }
+
+        // Completeness guard: if a new CodeSymbol subtype is added, this test (and
+        // SetRepoId) MUST be updated. Fails loudly with a type diff rather than
+        // silently leaving the new subtype to fall through to `_ => symbol`.
+        var allConcreteSubtypes = typeof(CodeSymbol).Assembly.GetTypes()
+            .Where(t => t.IsSealed && t != typeof(CodeSymbol) && typeof(CodeSymbol).IsAssignableFrom(t))
+            .ToHashSet();
+        var coveredSubtypes = samples.Select(s => s.GetType()).ToHashSet();
+        Assert.Equal(allConcreteSubtypes, coveredSubtypes);
     }
 }
