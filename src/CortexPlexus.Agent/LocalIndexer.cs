@@ -566,35 +566,61 @@ public sealed class LocalIndexer
     }
 
     /// <summary>
-    /// Extract absolute .csproj paths from a .sln file. Solution file format:
-    /// <c>Project("{GUID}") = "ProjectName", "relative\path\to\Project.csproj", "{GUID}"</c>
+    /// Extract absolute .csproj paths from a solution file. Handles both formats:
+    /// <list type="bullet">
+    /// <item>Classic <c>.sln</c> text: <c>Project("{GUID}") = "Name", "rel\path.csproj", "{GUID}"</c></item>
+    /// <item>Modern <c>.slnx</c> XML: <c>&lt;Project Path="rel/path.csproj" /&gt;</c> (possibly nested in &lt;Folder&gt;)</item>
+    /// </list>
+    /// Without .slnx support, every project in a .slnx-based repo is treated as an orphan
+    /// standalone unit and re-indexed once per project on a full index (R27-followup: a
+    /// 21-project repo was indexed 21× on each watch startup).
     /// </summary>
     internal static IEnumerable<string> ExtractCsprojPathsFromSln(string slnPath)
     {
-        if (!File.Exists(slnPath)) yield break;
-
+        var results = new List<string>();
+        if (!File.Exists(slnPath)) return results;
         var slnDir = Path.GetDirectoryName(slnPath) ?? "";
+
+        void Add(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath) ||
+                !relativePath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+                return;
+            // Normalize Windows-style backslashes (also valid on Linux MSBuildWorkspace).
+            var normalized = relativePath.Replace('\\', Path.DirectorySeparatorChar);
+            results.Add(Path.GetFullPath(Path.Combine(slnDir, normalized)));
+        }
+
+        if (slnPath.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                // <Project Path="..."/> elements, at any depth (top-level or inside <Folder>).
+                var doc = System.Xml.Linq.XDocument.Load(slnPath);
+                foreach (var proj in doc.Descendants("Project"))
+                    Add(proj.Attribute("Path")?.Value ?? "");
+            }
+            catch (Exception ex) when (ex is System.Xml.XmlException or IOException)
+            {
+                // Malformed/unreadable .slnx → return whatever parsed (possibly empty).
+            }
+            return results;
+        }
+
         string[] lines;
         try { lines = File.ReadAllLines(slnPath); }
-        catch (IOException) { yield break; }
+        catch (IOException) { return results; }
 
         foreach (var line in lines)
         {
             if (!line.StartsWith("Project(", StringComparison.Ordinal)) continue;
-
-            // Find the three quoted strings: "ProjectName", "relative\path.csproj", "{GUID}"
+            // Three quoted strings: "ProjectName", "relative\path.csproj", "{GUID}"
             var parts = line.Split('"');
             if (parts.Length < 6) continue;
-
-            var relativePath = parts[5];
-            if (!relativePath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            // Normalize Windows-style backslashes that also work on Linux MSBuildWorkspace
-            var normalized = relativePath.Replace('\\', Path.DirectorySeparatorChar);
-            var absolute = Path.GetFullPath(Path.Combine(slnDir, normalized));
-            yield return absolute;
+            Add(parts[5]);
         }
+
+        return results;
     }
 
     private static bool IsExcludedPath(string path, string[] excludedDirs)

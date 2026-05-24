@@ -239,6 +239,40 @@ public class LocalIndexerTests
     }
 
     [Fact]
+    public void ExtractCsprojPathsFromSln_ParsesSlnxXmlFormat()
+    {
+        // Modern .slnx (XML) format — projects nested in <Folder>. Without this, every
+        // project becomes an "orphan" standalone unit and gets re-indexed N× per full
+        // index (the 21× CortexPlexus startup bug).
+        var slnxContent = """
+            <Solution>
+              <Folder Name="/src/">
+                <Project Path="src/A/A.csproj" />
+                <Project Path="src/B/B.csproj" />
+              </Folder>
+              <Project Path="tests/C/C.csproj" />
+            </Solution>
+            """;
+        var (dir, cleanup) = CreateTempDir(("App.slnx", slnxContent));
+        try
+        {
+            var slnxPath = Path.Combine(dir, "App.slnx");
+            var results = LocalIndexer.ExtractCsprojPathsFromSln(slnxPath).ToList();
+
+            Assert.Equal(3, results.Count);
+            Assert.Contains(results, p => p.EndsWith("A.csproj"));
+            Assert.Contains(results, p => p.EndsWith("B.csproj"));
+            Assert.Contains(results, p => p.EndsWith("C.csproj"));
+            // Absolute + normalized
+            Assert.All(results, p => Assert.True(Path.IsPathRooted(p)));
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Fact]
     public void FindSolutionsAndProjects_OnlyCsproj_ReturnsCsprojFiles()
     {
         var (dir, cleanup) = CreateTempDir(
