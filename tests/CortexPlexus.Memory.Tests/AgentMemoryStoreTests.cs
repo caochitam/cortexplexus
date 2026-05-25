@@ -56,6 +56,24 @@ public sealed class AgentMemoryStoreTests(MemoryFixture fixture) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task ClearSessionAsync_DeletesOnlyThatSession()
+    {
+        // Two sessions + a project memory; clearing session-A removes only its rows.
+        await _store.SaveAsync("a1", MemoryScope.Session, "session-A", MemoryTopic.Note, 0.5, null, null);
+        await _store.SaveAsync("a2", MemoryScope.Session, "session-A", MemoryTopic.Todo, 0.5, null, null);
+        await _store.SaveAsync("b1", MemoryScope.Session, "session-B", MemoryTopic.Note, 0.5, null, null);
+        await _store.SaveAsync("p1", MemoryScope.Project, Guid.NewGuid().ToString(), MemoryTopic.Pattern, 0.5, null, null);
+
+        var deleted = await _store.ClearSessionAsync("session-A");
+
+        Assert.Equal(2, deleted);
+        Assert.Equal(2, await _store.CountAsync()); // session-B + project survive
+
+        Assert.Empty(await _store.ListAsync(MemoryScope.Session, "session-A", null, 50));
+        Assert.Single(await _store.ListAsync(MemoryScope.Session, "session-B", null, 50));
+    }
+
+    [Fact]
     public async Task SaveAsync_GlobalWithNullScopeId_IsAllowed()
     {
         var saved = await _store.SaveAsync(

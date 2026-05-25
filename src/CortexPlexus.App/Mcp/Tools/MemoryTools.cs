@@ -169,6 +169,10 @@ public sealed class MemoryTools
         if (hits.Count == 0)
             return "No memories matched. Try broader scope='all' or remove topic/relatedFqn filters.";
 
+        // Resolve project scope_id UUIDs → repository names so the agent can attribute each
+        // memory to a project (essential for cross-project recall, where scope='all' mixes repos).
+        var repoNames = await BuildRepoNameMapAsync(repoStore, ct);
+
         return JsonSerializer.Serialize(new
         {
             count = hits.Count,
@@ -178,6 +182,7 @@ public sealed class MemoryTools
                 content = h.Memory.Content,
                 scope = h.Memory.Scope,
                 scopeId = h.Memory.ScopeId,
+                repository = ResolveRepoName(h.Memory, repoNames),
                 topic = h.Memory.Topic,
                 importance = h.Memory.Importance,
                 score = Math.Round(h.Score, 4),
@@ -221,6 +226,8 @@ public sealed class MemoryTools
         var memories = await store.ListAsync(
             scope, scopeId, topic, Math.Clamp(limit, 1, 500), ct);
 
+        var repoNames = await BuildRepoNameMapAsync(repoStore, ct);
+
         return JsonSerializer.Serialize(new
         {
             count = memories.Count,
@@ -230,6 +237,7 @@ public sealed class MemoryTools
                 content = m.Content,
                 scope = m.Scope,
                 scopeId = m.ScopeId,
+                repository = ResolveRepoName(m, repoNames),
                 topic = m.Topic,
                 importance = m.Importance,
                 relatedFqns = m.RelatedFqns,
@@ -264,6 +272,52 @@ public sealed class MemoryTools
             ? JsonSerializer.Serialize(new { forgotten = true, id = guid }, JsonOpts)
             : JsonSerializer.Serialize(new { forgotten = false, id = guid, reason = "not_found" }, JsonOpts);
     }
+
+    [McpServerTool, Description(
+        "Clear all transient SESSION-scoped memories for a session id (the working-memory scratchpad). " +
+        "USE when a task or conversation ends, to drop short-lived state so it doesn't linger as noise. " +
+        "Only deletes scope='session' rows for the given sessionId — project and global memories are never touched. " +
+        "(Session memories also auto-decay within ~1-2 days, so this is for proactive cleanup.) " +
+        "Returns { cleared: true, deleted: N }. Requires Memory__Enabled=true.")]
+    public static async Task<string> ClearSession(
+        [Description("The session id (the client-supplied session UUID used when saving scope='session' memories)")] string? sessionId = null,
+        IAgentMemoryStore store = default!,
+        IOptions<MemoryOptions> options = default!,
+        CancellationToken ct = default)
+    {
+        if (!options.Value.Enabled) return DisabledMessage;
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return "Error: 'sessionId' is required (the session UUID whose session memories to clear).";
+
+        var deleted = await store.ClearSessionAsync(sessionId, ct);
+        return JsonSerializer.Serialize(new { cleared = true, sessionId, deleted }, JsonOpts);
+    }
+
+    /// <summary>
+    /// Build an id→name map of all repositories so memory output can show which project a
+    /// project-scoped memory belongs to (recall scope='all' mixes repos). Repos are few, so
+    /// one ListAsync per call is cheap.
+    /// </summary>
+    private static async Task<Dictionary<string, string>> BuildRepoNameMapAsync(
+        IRepositoryStore repoStore, CancellationToken ct)
+    {
+        var repos = await repoStore.ListAsync(ct);
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in repos)
+            map[r.Id.ToString()] = r.Name;
+        return map;
+    }
+
+    /// <summary>
+    /// Resolve a memory's project name: the repo name for a project-scoped memory whose scope_id
+    /// matches a known repository, else null (session/global, or an orphan scope_id from a deleted repo).
+    /// </summary>
+    private static string? ResolveRepoName(AgentMemory memory, IReadOnlyDictionary<string, string> repoNames)
+        => memory.Scope == MemoryScope.Project
+           && memory.ScopeId is { } id
+           && repoNames.TryGetValue(id, out var name)
+            ? name
+            : null;
 
     /// <summary>
     /// Resolves the effective project scope_id from (repository name, scopeId UUID).

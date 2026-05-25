@@ -186,6 +186,22 @@ public sealed class AgentMemoryStore(
         return rows > 0;
     }
 
+    public async Task<int> ClearSessionAsync(string sessionId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+            throw new ArgumentException("sessionId is required", nameof(sessionId));
+
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        // Scoped to session rows only — never touches project/global memory.
+        cmd.CommandText = "DELETE FROM agent_memories WHERE scope = 'session' AND scope_id = @id";
+        cmd.Parameters.AddWithValue("id", sessionId);
+        var rows = await cmd.ExecuteNonQueryAsync(ct);
+        if (rows > 0)
+            logger.LogInformation("Cleared {Rows} session memories for session {SessionId}", rows, sessionId);
+        return rows;
+    }
+
     public async Task<long> CountAsync(CancellationToken ct = default)
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);

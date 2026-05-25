@@ -63,6 +63,34 @@ public sealed class MemoryScoringTests
     }
 
     [Fact]
+    public void ScaleDaysFor_SessionScope_OverridesTopic()
+    {
+        // session scope forces the short scale regardless of topic; other scopes use topic scale.
+        Assert.Equal(MemoryScoring.SessionScaleDays,
+            MemoryScoring.ScaleDaysFor(MemoryScope.Session, MemoryTopic.Preference));
+        Assert.Equal(365, MemoryScoring.ScaleDaysFor(MemoryScope.Project, MemoryTopic.Preference));
+        Assert.Equal(365, MemoryScoring.ScaleDaysFor(MemoryScope.Global, MemoryTopic.Preference));
+    }
+
+    [Fact]
+    public void Score_SessionScope_DecaysFastRegardlessOfTopic()
+    {
+        var now = DateTimeOffset.UtcNow;
+        // A 'note' (60-day topic scale) — but session override makes λ ~1 day. After 2 days
+        // untouched, a session memory is forgotten while an identical project memory survives.
+        var session = Mem(0.5, MemoryTopic.Note, now.AddDays(-2)) with { Scope = MemoryScope.Session };
+        var project = Mem(0.5, MemoryTopic.Note, now.AddDays(-2)) with { Scope = MemoryScope.Project };
+
+        var sSession = MemoryScoring.Score(session, now);
+        var sProject = MemoryScoring.Score(project, now);
+
+        Assert.True(sSession < MemoryScoring.ForgetThreshold,
+            $"Expected session note forgotten after 2 days, got {sSession:F4}");
+        Assert.True(sProject >= MemoryScoring.ForgetThreshold,
+            $"Expected project note to survive 2 days, got {sProject:F4}");
+    }
+
+    [Fact]
     public void Score_MonotonicallyDecreasesInT()
     {
         var now = DateTimeOffset.UtcNow;

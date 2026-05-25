@@ -218,10 +218,71 @@ public sealed class MemoryToolsTests
 
         var result = await MemoryTools.RecallMemory(
             query: "preferences", store: store,
-            embeddings: BuildEmbeddings(), options: Opts(true));
+            embeddings: BuildEmbeddings(), repoStore: TestHelpers.BuildRepoStore(),
+            options: Opts(true));
 
         Assert.Contains(id.ToString(), result);
         Assert.Contains("\"count\": 1", result);
+    }
+
+    [Fact]
+    public async Task RecallMemory_ProjectScoped_ResolvesRepositoryName()
+    {
+        // Cross-project recall (scope='all') mixes repos; the output must name each memory's
+        // project so the agent can attribute it. A project-scoped memory whose scope_id matches
+        // a known repo gets `repository: "<name>"`.
+        var store = BuildStore();
+        var repoId = Guid.NewGuid();
+        store.RecallAsync(
+                Arg.Any<float[]?>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<AgentMemoryResult>>(
+                [new AgentMemoryResult(new AgentMemory(
+                    Id: Guid.NewGuid(), Content: "uses AGE", Scope: MemoryScope.Project,
+                    ScopeId: repoId.ToString(), Topic: MemoryTopic.Pattern, Importance: 0.7,
+                    RelatedFqns: Array.Empty<string>(),
+                    CreatedAt: DateTimeOffset.UtcNow,
+                    LastAccessedAt: DateTimeOffset.UtcNow, AccessCount: 1), Score: 0.7)]));
+
+        var repoStore = TestHelpers.BuildRepoStore(TestHelpers.MakeRepo("CortexPlexus", id: repoId));
+
+        var result = await MemoryTools.RecallMemory(
+            query: "graph db", store: store,
+            embeddings: BuildEmbeddings(), repoStore: repoStore, options: Opts(true));
+
+        Assert.Contains("\"repository\": \"CortexPlexus\"", result);
+    }
+
+    [Fact]
+    public async Task ClearSession_Disabled_ReturnsDisabled()
+    {
+        var result = await MemoryTools.ClearSession(
+            sessionId: "s1", store: BuildStore(), options: Opts(false));
+        Assert.Contains("Memory is disabled", result);
+    }
+
+    [Fact]
+    public async Task ClearSession_MissingSessionId_ReturnsError()
+    {
+        var result = await MemoryTools.ClearSession(
+            sessionId: null, store: BuildStore(), options: Opts(true));
+        Assert.Contains("'sessionId' is required", result);
+    }
+
+    [Fact]
+    public async Task ClearSession_Success_ReturnsDeletedCount()
+    {
+        var store = BuildStore();
+        store.ClearSessionAsync("s-42", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(3));
+
+        var result = await MemoryTools.ClearSession(
+            sessionId: "s-42", store: store, options: Opts(true));
+
+        Assert.Contains("\"cleared\": true", result);
+        Assert.Contains("\"deleted\": 3", result);
+        await store.Received(1).ClearSessionAsync("s-42", Arg.Any<CancellationToken>());
     }
 
     [Fact]

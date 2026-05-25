@@ -50,6 +50,14 @@ public interface IAgentMemoryStore
     /// <summary>Delete by id. Returns true if a row was removed, false if not found.</summary>
     Task<bool> ForgetAsync(Guid id, CancellationToken ct = default);
 
+    /// <summary>
+    /// Delete all <c>session</c>-scoped memories for a given session id (the client-supplied
+    /// session UUID). Used by the <c>clear_session</c> tool to drop transient working memory
+    /// when a task/conversation ends. Returns the number of rows deleted. Only touches
+    /// <c>scope='session'</c> rows — project/global memories are never affected.
+    /// </summary>
+    Task<int> ClearSessionAsync(string sessionId, CancellationToken ct = default);
+
     /// <summary>Total row count in the store (used by Health reporting).</summary>
     Task<long> CountAsync(CancellationToken ct = default);
 

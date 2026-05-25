@@ -27,7 +27,7 @@ Every memory has exactly one scope:
 
 | Scope | Lifetime | `scope_id` | Example |
 |---|---|---|---|
-| `session` | Single AI conversation | session UUID from the client | "User is debugging X — remembered for this chat" |
+| `session` | Single AI conversation (decays in ~1–2 days; clear early with `clear_session`) | session UUID from the client | "User is debugging X — remembered for this chat" |
 | `project` | Per-repository | `repositories.id` | "In CortexFlow, auth middleware logs to `/var/log/auth.jsonl`" |
 | `global` | Cross-project | `NULL` | "User prefers terse explanations" |
 
@@ -60,6 +60,8 @@ score = importance × exp( -(t / λ)^k )
       t = days since last_accessed_at
       k = 1.5 (Weibull shape — forgets faster than exponential)
       λ = topic half-life (days, from the table above)
+          EXCEPT scope='session', which forces λ≈1 day regardless of topic, so transient
+          working state auto-forgets within ~1–2 days.
 ```
 
 ### Worked examples
@@ -134,7 +136,7 @@ Set `Memory__Enabled=false` and restart. Existing data is **retained** in the `a
 
 ## Tool reference
 
-Four MCP tools, all gated by `Memory.Enabled`:
+Five MCP tools, all gated by `Memory.Enabled`:
 
 ### `save_memory`
 
@@ -167,7 +169,10 @@ Parameters:
   topic: string (optional)
   related_fqn: string (optional)
   limit: int (optional, default 10, max 50)
-Returns: { memories: [{ id, content, scope, topic, importance, score, related_fqns, created_at }] }
+Returns: { memories: [{ id, content, scope, scope_id, repository, topic, importance, score, related_fqns, created_at }] }
+  - `repository`: for scope='project' memories, the resolved repo NAME (so cross-project
+    recall can attribute each memory to its project); null for session/global or an
+    orphan scope_id.
 Side effect: bumps access_count + last_accessed_at for returned rows (refreshes their decay).
 ```
 
@@ -194,6 +199,19 @@ Parameters:
 Returns: { forgotten: true } or { forgotten: false, reason: 'not_found' }
 ```
 
+### `clear_session`
+
+Delete all transient `session`-scoped memories for one session id (the working-memory
+scratchpad). Use when a task/conversation ends so short-lived state doesn't linger. Only
+touches `scope='session'` rows for that id — project/global memory is never affected.
+Session memories also auto-decay within ~1–2 days (see §Decay), so this is for proactive cleanup.
+
+```
+Parameters:
+  session_id: string (required — the session UUID used when saving scope='session' memories)
+Returns: { cleared: true, deleted: N }
+```
+
 ## Storage model
 
 Single table `agent_memories` in the same PostgreSQL database as `code_symbols`. See [ADR-010](decisions/010-memory-storage-reuse-postgres.md) for the "why reuse Postgres" rationale.
@@ -217,7 +235,7 @@ Indexes: HNSW on embedding, GIN on related_fqns, B-tree on (scope, scope_id), pa
 
 - **No LLM consolidation** — storing "I like cheese" then "I don't like cheese" keeps both. A future release (v0.9.0) will add Mem0-style A.U.D.N. logic.
 - **Soft FQN links can rot** — symbol renames break the link silently. `related_fqns` is retained verbatim.
-- **Per-session state not auto-cleared** — session memories stick around until the reaper gets them. Clients can proactively call `forget_memory` per-ID.
+- **Per-session state** — `session`-scoped memories use a short decay scale (~1 day, overriding the topic scale), so the reaper auto-forgets untouched ones within ~1–2 days. Clients can also clear them immediately with `clear_session` (or per-ID with `forget_memory`).
 - **No bitemporal validity** (Zep-style `valid_from/valid_until`) — everything is "now" or "forgotten".
 
 ## See also
