@@ -32,8 +32,14 @@ public sealed class IndexingWorker(
                 // (e.g. /workspace is a CortexPlexus checkout). Indexing it registers a duplicate
                 // "CortexPlexus" repo that shadows the real one (RepoResolver hijack). A file with
                 // no nearer project marker resolves up to the root; skip those.
+                // Workspace__IndexRoot=true opts into indexing the workspace root itself — used when
+                // the watched path IS the single project to keep fresh (Workspace__Path == the repo).
+                // Left off (default), the root is skipped: the original guard against a broad mount
+                // whose root is the server's own checkout being registered as a duplicate repo.
                 var workspaceRoot = Environment.GetEnvironmentVariable("Workspace__Path");
-                if (IsSamePath(projectPath, workspaceRoot))
+                var indexRoot = string.Equals(
+                    Environment.GetEnvironmentVariable("Workspace__IndexRoot"), "true", StringComparison.OrdinalIgnoreCase);
+                if (!indexRoot && IsSamePath(projectPath, workspaceRoot))
                 {
                     logger.LogDebug("Skipping auto-index of workspace root {Path} for {File}", projectPath, job.FilePath);
                     continue;

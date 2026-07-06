@@ -56,11 +56,7 @@ public sealed class FileWatcherService(
     private void OnFileChanged(object sender, FileSystemEventArgs e)
     {
         // Skip build/dependency directories
-        if (e.FullPath.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") ||
-            e.FullPath.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") ||
-            e.FullPath.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}") ||
-            e.FullPath.Contains($"{Path.DirectorySeparatorChar}__pycache__{Path.DirectorySeparatorChar}") ||
-            e.FullPath.Contains($"{Path.DirectorySeparatorChar}.venv{Path.DirectorySeparatorChar}"))
+        if (IsInExcludedDirectory(e.FullPath))
             return;
 
         // Debounce: ignore events within 2 seconds of last event for same file
@@ -83,6 +79,25 @@ public sealed class FileWatcherService(
 
         var job = new IndexingJob(e.FullPath, Guid.Empty, changeType);
         jobChannel.Writer.TryWrite(job);
+    }
+
+    // Build / dependency / VCS directories whose churn must never trigger a re-index. Crucially
+    // includes .next (and other framework build outputs): a running `next dev` / `next build`
+    // rewrites .next/**/*.js constantly, which would otherwise re-index in a tight loop.
+    private static readonly string[] ExcludedDirSegments =
+    {
+        "node_modules", ".git", "bin", "obj", "dist", "build", "coverage",
+        ".next", ".turbo", ".nuxt", ".svelte-kit", ".angular", ".output",
+        "__pycache__", ".venv", "venv", "target", ".gradle", "vendor",
+    };
+
+    private static bool IsInExcludedDirectory(string fullPath)
+    {
+        var normalized = fullPath.Replace('\\', '/');
+        foreach (var seg in ExcludedDirSegments)
+            if (normalized.Contains($"/{seg}/", StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     public override void Dispose()
