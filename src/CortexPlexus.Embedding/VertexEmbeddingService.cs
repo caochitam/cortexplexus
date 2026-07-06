@@ -1,7 +1,9 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CortexPlexus.Core.Abstractions;
+using Google.Apis.Auth.OAuth2;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
@@ -31,13 +33,25 @@ public sealed class VertexEmbeddingService(
 
     private readonly EmbeddingOptions _options = options.Value;
 
+    // Lazily-built SA credential (scoped, auto-refreshing) + the project id read from the
+    // SA file. Guarded so concurrent embedding batches build them exactly once.
+    private readonly SemaphoreSlim _credLock = new(1, 1);
+    private GoogleCredential? _credential;
+    private string? _saProjectId;
+
+    private bool UsesServiceAccount => !string.IsNullOrWhiteSpace(_options.VertexServiceAccountJsonPath);
+
     private readonly ResiliencePipeline<HttpResponseMessage> _pipeline =
         new ResiliencePipelineBuilder<HttpResponseMessage>()
             .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
             {
-                MaxRetryAttempts = 3,
+                // Rate limits (429) are common on constrained Vertex quotas — retry patiently
+                // with jittered exponential backoff (2s,4s,8s,16s,32s) instead of dropping the
+                // batch after a few quick attempts.
+                MaxRetryAttempts = 5,
                 BackoffType = DelayBackoffType.Exponential,
-                Delay = TimeSpan.FromSeconds(1),
+                UseJitter = true,
+                Delay = TimeSpan.FromSeconds(2),
                 ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
                     .HandleResult(r =>
                         r.StatusCode is System.Net.HttpStatusCode.TooManyRequests
@@ -77,7 +91,7 @@ public sealed class VertexEmbeddingService(
         try
         {
             var client = httpClientFactory.CreateClient(nameof(VertexEmbeddingService));
-            var url = BuildPredictUrl();
+            var url = await BuildPredictUrlAsync(ct);
 
             var request = new VertexPredictRequest
             {
@@ -85,8 +99,21 @@ public sealed class VertexEmbeddingService(
                 Parameters = new VertexParameters { OutputDimensionality = _options.Dimensions }
             };
 
+            // Bearer token is fetched once per sub-batch (GoogleCredential caches + refreshes);
+            // the request message is rebuilt inside the retry lambda since an HttpRequestMessage
+            // cannot be resent.
+            var bearer = UsesServiceAccount ? await GetAccessTokenAsync(ct) : null;
+
             var response = await _pipeline.ExecuteAsync(async token =>
-                await client.PostAsJsonAsync(url, request, JsonOptions, token), ct);
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = JsonContent.Create(request, options: JsonOptions)
+                };
+                if (bearer is not null)
+                    message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+                return await client.SendAsync(message, token);
+            }, ct);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -112,7 +139,7 @@ public sealed class VertexEmbeddingService(
         }
     }
 
-    private string BuildPredictUrl()
+    private async Task<string> BuildPredictUrlAsync(CancellationToken ct)
     {
         var location = string.IsNullOrWhiteSpace(_options.VertexLocation) ? "global" : _options.VertexLocation;
 
@@ -122,10 +149,72 @@ public sealed class VertexEmbeddingService(
             ? "aiplatform.googleapis.com"
             : $"{location}-aiplatform.googleapis.com";
 
-        var apiKey = !string.IsNullOrWhiteSpace(_options.VertexApiKey) ? _options.VertexApiKey : _options.ApiKey;
+        var projectId = !string.IsNullOrWhiteSpace(_options.VertexProjectId)
+            ? _options.VertexProjectId
+            : await GetProjectIdAsync(ct);
 
-        return $"https://{host}/v1/projects/{_options.VertexProjectId}/locations/{location}" +
-               $"/publishers/google/models/{_options.VertexModelId}:predict?key={apiKey}";
+        var baseUrl = $"https://{host}/v1/projects/{projectId}/locations/{location}" +
+                      $"/publishers/google/models/{_options.VertexModelId}:predict";
+
+        // Service-account path → OAuth Bearer (Authorization header), no query key.
+        if (UsesServiceAccount)
+            return baseUrl;
+
+        // Express mode → API key on the query string.
+        var apiKey = !string.IsNullOrWhiteSpace(_options.VertexApiKey) ? _options.VertexApiKey : _options.ApiKey;
+        return $"{baseUrl}?key={apiKey}";
+    }
+
+    /// <summary>
+    /// Mint a fresh (cached / auto-refreshed) OAuth2 access token from the configured
+    /// service-account JSON, scoped to <c>cloud-platform</c>. Built once, then reused.
+    /// </summary>
+    private async Task<string?> GetAccessTokenAsync(CancellationToken ct)
+    {
+        var credential = await GetCredentialAsync(ct);
+        return await ((ITokenAccess)credential).GetAccessTokenForRequestAsync(cancellationToken: ct);
+    }
+
+    private async Task<GoogleCredential> GetCredentialAsync(CancellationToken ct)
+    {
+        if (_credential is not null) return _credential;
+        await _credLock.WaitAsync(ct);
+        try
+        {
+            _credential ??= GoogleCredential
+                .FromFile(_options.VertexServiceAccountJsonPath!)
+                .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
+        }
+        finally
+        {
+            _credLock.Release();
+        }
+        return _credential;
+    }
+
+    /// <summary>Project id read from the SA JSON's own <c>project_id</c> field (cached).</summary>
+    private async Task<string?> GetProjectIdAsync(CancellationToken ct)
+    {
+        if (_saProjectId is not null) return _saProjectId;
+        if (!UsesServiceAccount) return _options.VertexProjectId;
+
+        await _credLock.WaitAsync(ct);
+        try
+        {
+            if (_saProjectId is null)
+            {
+                await using var stream = File.OpenRead(_options.VertexServiceAccountJsonPath!);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+                _saProjectId = doc.RootElement.TryGetProperty("project_id", out var pid)
+                    ? pid.GetString()
+                    : null;
+            }
+        }
+        finally
+        {
+            _credLock.Release();
+        }
+        return _saProjectId;
     }
 
     private static IEnumerable<IList<T>> Chunk<T>(IList<T> source, int size)

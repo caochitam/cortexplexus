@@ -49,6 +49,16 @@ public sealed record EmbeddingOptions
     public string? VertexApiKey { get; set; }
 
     /// <summary>
+    /// Path to a Google service-account JSON key file. When set (and <see cref="Provider"/>
+    /// == "vertex"), the Vertex provider authenticates with an OAuth2 Bearer token minted
+    /// from this SA (scope <c>cloud-platform</c>, auto-refreshed) and calls the standard
+    /// <c>:predict</c> endpoint WITHOUT the <c>?key=</c> query string. Takes precedence over
+    /// <see cref="VertexApiKey"/>. <see cref="VertexProjectId"/> defaults to the SA file's
+    /// own <c>project_id</c> when left unset. Runtime-only; never committed.
+    /// </summary>
+    public string? VertexServiceAccountJsonPath { get; set; }
+
+    /// <summary>
     /// How many embedding batches to issue in parallel during indexing.
     /// <para>
     /// <c>null</c> (default) = auto-detect by provider: <c>1</c> for Ollama

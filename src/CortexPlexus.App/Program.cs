@@ -319,6 +319,15 @@ void ConfigureServices(IServiceCollection services, string[] args, IConfiguratio
         options.VertexLocation = EmbedCfg("VertexLocation", "Embedding__VertexLocation") ?? "global";
         options.VertexModelId = EmbedCfg("VertexModelId", "Embedding__VertexModelId") ?? "text-embedding-005";
         options.VertexApiKey = EmbedCfg("VertexApiKey", "Embedding__VertexApiKey");
+        // Service-account JSON path (OAuth Bearer). Also honours the conventional
+        // GOOGLE_APPLICATION_CREDENTIALS env var as a fallback.
+        options.VertexServiceAccountJsonPath =
+            EmbedCfg("VertexServiceAccountJsonPath", "Embedding__VertexServiceAccountJsonPath")
+            ?? Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS");
+        // Override embedding concurrency (else provider default: ollama=1, gemini=4, vertex=8).
+        // Lower it to stay under a constrained Vertex/Gemini quota (avoids 429 storms).
+        if (int.TryParse(EmbedCfg("MaxParallelBatches", "Embedding__MaxParallelBatches"), out var mpb) && mpb > 0)
+            options.MaxParallelBatches = mpb;
         if (int.TryParse(EmbedCfg("VertexInstancesPerCall", "Embedding__VertexInstancesPerCall"), out var ipc))
             options.VertexInstancesPerCall = ipc;
     });
