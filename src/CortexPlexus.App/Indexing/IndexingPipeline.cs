@@ -170,6 +170,38 @@ public sealed class IndexingPipeline(
             .Select(s => SetRepoId(s, repo.Id))
             .ToList();
 
+        // Incremental write scope. The whole-repo tree-sitter parse above is required so the
+        // TS resolver sees cross-file references, but re-embedding + re-upserting every symbol
+        // on each small change costs minutes (embedding dominates). When this is an incremental
+        // run (some files changed — not a first index), restrict the symbols and relationships
+        // we (re-)write to those that live in the changed files. Everything else is already
+        // persisted and unchanged; the graph upsert only clears+rewrites edges for the source
+        // vertices in the batch, and the vector upsert only touches the FQNs it is handed —
+        // so unchanged nodes, edges and embeddings are preserved.
+        if (changedFiles is { Count: > 0 })
+        {
+            var changedSet = new HashSet<string>(changedFiles, StringComparer.OrdinalIgnoreCase);
+            var fqnToFile = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var s in symbols)
+                if (s.FilePath is not null)
+                    fqnToFile[s.Fqn] = s.FilePath;
+
+            symbols = symbols
+                .Where(s => s.FilePath is not null && changedSet.Contains(s.FilePath))
+                .ToList();
+
+            parseResult = parseResult with
+            {
+                Relationships = parseResult.Relationships
+                    .Where(r => fqnToFile.TryGetValue(r.FromFqn, out var f) && changedSet.Contains(f))
+                    .ToList()
+            };
+
+            logger.LogInformation(
+                "Incremental write: {Files} changed file(s) → {Symbols} symbols, {Rels} relationships",
+                changedFiles.Count, symbols.Count, parseResult.Relationships.Count);
+        }
+
         // Generate embeddings for the kinds enumerated in CortexPlexus.Core.EmbeddableKinds.
         // Single source of truth — also used by the agent-upload endpoint and the kind-aware
         // Health metric (ADR 008 / docs/HEALTH-METRICS.md).
