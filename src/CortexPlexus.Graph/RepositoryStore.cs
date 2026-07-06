@@ -171,6 +171,17 @@ public sealed class RepositoryStore(NpgsqlDataSource dataSource) : IRepositorySt
         return result;
     }
 
+    public async Task RemoveFileHashesAsync(Guid repoId, IReadOnlyCollection<string> filePaths, CancellationToken ct = default)
+    {
+        if (filePaths.Count == 0) return;
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM file_hashes WHERE repo_id = @repoId AND file_path = ANY(@paths)";
+        cmd.Parameters.AddWithValue("@repoId", repoId);
+        cmd.Parameters.AddWithValue("@paths", filePaths.ToArray());
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     private static RepositoryInfo ReadRepositoryInfo(NpgsqlDataReader reader)
     {
         return new RepositoryInfo(

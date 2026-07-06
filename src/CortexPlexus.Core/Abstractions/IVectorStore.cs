@@ -24,4 +24,7 @@ public interface IVectorStore
     Task<VectorUpsertResult> UpsertAsync(IEnumerable<CodeSymbol> symbols, IReadOnlyDictionary<string, float[]> embeddings, CancellationToken ct = default);
     Task<IReadOnlyList<SearchResult>> SearchAsync(float[] queryEmbedding, int limit = 10, Guid? repoId = null, string? kind = null, CancellationToken ct = default);
     Task DeleteByRepoAsync(Guid repoId, CancellationToken ct = default);
+
+    /// <summary>Delete the <c>code_symbols</c> rows of the given files — used to reconcile files removed from the repo.</summary>
+    Task<int> DeleteByFilesAsync(Guid repoId, IReadOnlyCollection<string> filePaths, CancellationToken ct = default);
 }

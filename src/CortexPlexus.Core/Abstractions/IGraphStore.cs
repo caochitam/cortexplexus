@@ -15,6 +15,9 @@ public interface IGraphStore
     Task<IReadOnlyList<SearchResult>> QueryReferencedByAsync(string fqn, int depth = 1, CancellationToken ct = default);
     Task DeleteByRepoAsync(Guid repoId, CancellationToken ct = default);
 
+    /// <summary>Delete graph vertices of the given files — used to reconcile files removed from the repo.</summary>
+    Task DeleteByFilesAsync(Guid repoId, IReadOnlyCollection<string> filePaths, CancellationToken ct = default);
+
     // Phase 3: .NET Deep Analysis queries
     Task<IReadOnlyList<SearchResult>> QueryDiRegistrationsAsync(string? serviceTypeFqn = null, Guid? repoId = null, CancellationToken ct = default);
     Task<IReadOnlyList<SearchResult>> QueryEntityMappingsAsync(string? entityName = null, Guid? repoId = null, CancellationToken ct = default);

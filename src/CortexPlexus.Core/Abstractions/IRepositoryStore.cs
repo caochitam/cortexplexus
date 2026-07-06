@@ -19,4 +19,7 @@ public interface IRepositoryStore
     Task<bool> IsFileChangedAsync(string filePath, Guid repoId, string contentHash, CancellationToken ct = default);
     Task UpdateFileHashAsync(string filePath, Guid repoId, string contentHash, CancellationToken ct = default);
     Task<Dictionary<string, string>> GetFileHashesAsync(Guid repoId, CancellationToken ct = default);
+
+    /// <summary>Forget the stored hashes of the given files (after they were removed from the repo).</summary>
+    Task RemoveFileHashesAsync(Guid repoId, IReadOnlyCollection<string> filePaths, CancellationToken ct = default);
 }

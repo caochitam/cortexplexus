@@ -269,6 +269,17 @@ public sealed class VectorStore(NpgsqlDataSource dataSource, ILogger<VectorStore
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<int> DeleteByFilesAsync(Guid repoId, IReadOnlyCollection<string> filePaths, CancellationToken ct = default)
+    {
+        if (filePaths.Count == 0) return 0;
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM code_symbols WHERE repo_id = @repoId AND file_path = ANY(@paths)";
+        cmd.Parameters.AddWithValue("@repoId", repoId);
+        cmd.Parameters.AddWithValue("@paths", filePaths.ToArray());
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     // --- Private helpers ---
 
     private static async Task UpsertBatch(

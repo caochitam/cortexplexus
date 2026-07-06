@@ -674,6 +674,18 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         await ExecuteCypher(conn, cypher, ct);
     }
 
+    public async Task DeleteByFilesAsync(Guid repoId, IReadOnlyCollection<string> filePaths, CancellationToken ct = default)
+    {
+        if (filePaths.Count == 0) return;
+        var repo = EscapeCypher(repoId.ToString());
+        var list = string.Join(", ", filePaths.Select(f => "'" + EscapeCypher(f) + "'"));
+        var cypher = "MATCH (n {repo_id: '" + repo + "'}) WHERE n.file_path IN [" + list + "] DETACH DELETE n";
+
+        await using var conn = await dataSource.OpenConnectionAsync(ct);
+        await SetAgePath(conn, ct);
+        await ExecuteCypher(conn, cypher, ct);
+    }
+
     // --- Phase 3: .NET Deep Analysis queries ---
 
     public async Task<IReadOnlyList<SearchResult>> QueryDiRegistrationsAsync(

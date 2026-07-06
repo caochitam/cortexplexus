@@ -72,6 +72,24 @@ public sealed class IndexingPipeline(
 
         // Check for changed files (incremental indexing)
         var changedFiles = await GetChangedFilesAsync(path, repo.Id, ct);
+
+        // Reconcile deletions: files that were indexed before but no longer exist on disk. Runs
+        // BEFORE the "nothing changed" early-return so a pull that ONLY deletes files still purges
+        // their symbols / edges / embeddings, keeping the index in sync with the code.
+        if (changedFiles is not null)
+        {
+            var storedHashes = await repositoryStore.GetFileHashesAsync(repo.Id, ct);
+            var deletedFiles = storedHashes.Keys.Where(f => !File.Exists(f)).ToList();
+            if (deletedFiles.Count > 0)
+            {
+                await graphStore.DeleteByFilesAsync(repo.Id, deletedFiles, ct);
+                var removed = await vectorStore.DeleteByFilesAsync(repo.Id, deletedFiles, ct);
+                await repositoryStore.RemoveFileHashesAsync(repo.Id, deletedFiles, ct);
+                logger.LogInformation(
+                    "Reconciled {Files} deleted file(s) → removed {Symbols} symbols", deletedFiles.Count, removed);
+            }
+        }
+
         if (changedFiles is { Count: 0 })
         {
             logger.LogInformation("No files changed since last index. Skipping.");
