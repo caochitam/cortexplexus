@@ -77,6 +77,20 @@ public sealed class TreeSitterCodeParser : ICodeParser
             }
         }
 
+        // Whole-repo resolution pass: rewrite unresolved TS/JS call & import endpoints (bare
+        // callee names, raw import specifiers) to real vertex FQNs so the call/dependency graph
+        // tools work for TypeScript. Requires the full file set — only done for the directory
+        // scan, not the incremental ParseFilesAsync path. Best-effort: a failure here must not
+        // sink the whole parse, so fall back to the unresolved edges.
+        try
+        {
+            allRelationships = new TypeScriptReferenceResolver(path).Resolve(allSymbols, allRelationships);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TypeScript reference resolution failed; keeping unresolved edges");
+        }
+
         stopwatch.Stop();
 
         _logger.LogInformation(
@@ -166,6 +180,13 @@ public sealed class TreeSitterCodeParser : ICodeParser
             || normalized.Contains("/.git/")
             || normalized.Contains("/dist/")
             || normalized.Contains("/build/")
+            || normalized.Contains("/.next/")      // Next.js build output (compiled JS duplicates every symbol)
+            || normalized.Contains("/.turbo/")     // Turborepo cache
+            || normalized.Contains("/.nuxt/")      // Nuxt build output
+            || normalized.Contains("/.svelte-kit/")// SvelteKit build output
+            || normalized.Contains("/.angular/")   // Angular cache
+            || normalized.Contains("/.output/")    // Nitro / Nuxt 3 output
+            || normalized.Contains("/coverage/")   // test coverage output
             || normalized.Contains("/bin/")        // .NET build output
             || normalized.Contains("/obj/")        // .NET intermediate output
             || normalized.Contains("/__pycache__/")

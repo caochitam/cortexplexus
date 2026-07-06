@@ -488,17 +488,78 @@ internal sealed class TypeScriptExtractor
         var raw = NodeText(sourceNode);
         var importPath = raw.Trim('\'', '"', '`');
 
+        var meta = new Dictionary<string, string> { ["importPath"] = importPath };
+
+        // Capture named-import local bindings so the whole-repo resolver
+        // (TypeScriptReferenceResolver) can map a bare call `getTicketPrice()` back to the
+        // symbol it was imported from. Encoded as comma-separated "local" or "local=original"
+        // (the "=original" form is only emitted for aliased imports, `import { a as b }`).
+        var names = CollectImportedNames(node);
+        if (names.Length > 0) meta["names"] = names;
+
         _relationships.Add(new Relationship(
             fileNamespace,
             importPath,
             RelationshipType.DependsOn,
-            new Dictionary<string, string> { ["importPath"] = importPath }));
+            meta));
+    }
+
+    /// <summary>
+    /// Collects the local binding names of a named import
+    /// (<c>import { a, b as c } from 'mod'</c> → "a,c=b"). Default and namespace imports are
+    /// skipped: their call sites are member expressions (<c>ns.foo()</c>) which the resolver
+    /// does not treat as bare-identifier calls.
+    /// </summary>
+    private string CollectImportedNames(global::TreeSitter.Node importNode)
+    {
+        var clause = FindChildByType(importNode, "import_clause");
+        if (clause is null) return string.Empty;
+
+        var named = FindChildByType(clause, "named_imports");
+        if (named is null) return string.Empty;
+
+        var parts = new List<string>();
+        foreach (var spec in named.Children)
+        {
+            if (spec.Type != "import_specifier") continue;
+            var nameNode = spec.GetChildForField("name");
+            if (nameNode is null) continue;
+
+            var original = NodeText(nameNode);
+            var aliasNode = spec.GetChildForField("alias");
+            if (aliasNode is not null)
+            {
+                var local = NodeText(aliasNode);
+                parts.Add(local == original ? local : $"{local}={original}");
+            }
+            else
+            {
+                parts.Add(original);
+            }
+        }
+        return string.Join(",", parts);
     }
 
     private void ExtractCall(global::TreeSitter.Node node, string? containingTypeFqn, string fileNamespace)
     {
         var functionNode = node.GetChildForField("function");
         if (functionNode is null) return;
+
+        // Dynamic import — `await import('@/lib/x')`. Not a call to a user symbol, but a real
+        // module dependency: emit a DependsOn edge so the resolver can wire it into the
+        // dependency/circular graph. The destructured bindings (`const { getTicketPrice } = …`)
+        // are recovered separately via the resolver's unique-export fallback.
+        if (functionNode.Type is "import")
+        {
+            var spec = FirstStringArgument(node.GetChildForField("arguments"));
+            if (spec is not null)
+                _relationships.Add(new Relationship(
+                    fileNamespace,
+                    spec,
+                    RelationshipType.DependsOn,
+                    new Dictionary<string, string> { ["importPath"] = spec, ["dynamic"] = "1" }));
+            return;
+        }
 
         var calleeName = functionNode.Type switch
         {
@@ -538,6 +599,18 @@ internal sealed class TypeScriptExtractor
         foreach (var child in node.Children)
         {
             if (child.Type == type) return child;
+        }
+        return null;
+    }
+
+    /// <summary>First string-literal argument of a call's argument list, unquoted (or null).</summary>
+    private static string? FirstStringArgument(global::TreeSitter.Node? arguments)
+    {
+        if (arguments is null) return null;
+        foreach (var child in arguments.Children)
+        {
+            if (child.Type == "string")
+                return NodeText(child).Trim('\'', '"', '`');
         }
         return null;
     }
