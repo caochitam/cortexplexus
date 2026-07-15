@@ -16,7 +16,12 @@ public sealed class MarkdownParser(ILogger<MarkdownParser> logger)
 
     private static readonly HashSet<string> ExcludedDirs = new(StringComparer.OrdinalIgnoreCase)
     {
-        "node_modules", "bin", "obj", ".git", ".vs", "__pycache__", ".venv", "venv"
+        "node_modules", "bin", "obj", ".git", ".vs", "__pycache__", ".venv", "venv",
+        // Framework build outputs — same list as TreeSitterCodeParser/FileWatcherService.
+        // .next/standalone copies the repo's docs/ verbatim, so without this every doc
+        // section is indexed twice (once real, once from the build artifact).
+        "dist", "build", "coverage", ".next", ".turbo", ".nuxt", ".svelte-kit",
+        ".angular", ".output", "target", ".gradle", "vendor",
     };
 
     /// <summary>

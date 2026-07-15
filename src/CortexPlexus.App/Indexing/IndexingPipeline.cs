@@ -300,11 +300,7 @@ public sealed class IndexingPipeline(
     {
         var csFiles = IndexableExtensions
             .SelectMany(ext => Directory.GetFiles(path, ext, SearchOption.AllDirectories))
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}__pycache__{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}.venv{Path.DirectorySeparatorChar}"))
+            .Where(f => !IsExcludedPath(f))
             .ToList();
 
         var changed = new List<string>();
@@ -335,10 +331,7 @@ public sealed class IndexingPipeline(
     {
         var allFiles = IndexableExtensions
             .SelectMany(ext => Directory.GetFiles(path, ext, SearchOption.AllDirectories))
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}")
-                     && !f.Contains($"{Path.DirectorySeparatorChar}__pycache__{Path.DirectorySeparatorChar}"));
+            .Where(f => !IsExcludedPath(f));
 
         foreach (var file in allFiles)
         {
@@ -546,11 +539,24 @@ public sealed class IndexingPipeline(
         }
     }
 
+    // Build / dependency / VCS directories excluded from every enumeration in this pipeline
+    // (change detection, hash bookkeeping, solution discovery). Mirrors
+    // FileWatcherService.ExcludedDirSegments — .next et al. must be excluded here too, or the
+    // initial index picks up build artifacts the watcher would never have re-indexed.
+    private static readonly string[] ExcludedDirSegments =
+    {
+        "node_modules", ".git", "bin", "obj", "dist", "build", "coverage",
+        ".next", ".turbo", ".nuxt", ".svelte-kit", ".angular", ".output",
+        "__pycache__", ".venv", "venv", "target", ".gradle", "vendor",
+    };
+
     internal static bool IsExcludedPath(string path)
     {
-        var sep = Path.DirectorySeparatorChar;
-        return path.Contains($"{sep}bin{sep}") || path.Contains($"{sep}obj{sep}")
-            || path.Contains($"{sep}node_modules{sep}");
+        var normalized = path.Replace('\\', '/');
+        foreach (var seg in ExcludedDirSegments)
+            if (normalized.Contains($"/{seg}/", StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     // Source/doc extensions the pipeline can index. Single list so the "is there anything to
@@ -567,14 +573,11 @@ public sealed class IndexingPipeline(
     {
         if (!Directory.Exists(path)) return false;
 
-        var sep = Path.DirectorySeparatorChar;
         foreach (var ext in IndexableExtensions)
         {
             foreach (var file in Directory.EnumerateFiles(path, ext, SearchOption.AllDirectories))
             {
-                if (!file.Contains($"{sep}bin{sep}") && !file.Contains($"{sep}obj{sep}")
-                    && !file.Contains($"{sep}node_modules{sep}") && !file.Contains($"{sep}__pycache__{sep}")
-                    && !file.Contains($"{sep}.venv{sep}"))
+                if (!IsExcludedPath(file))
                     return true;
             }
         }
