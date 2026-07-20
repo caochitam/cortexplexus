@@ -63,6 +63,14 @@ public sealed class VertexEmbeddingService(
             })
             .Build();
 
+    // Proactive client-side rate limiter (EmbeddingOptions.VertexMinRequestIntervalMs). Spaces
+    // successive :predict calls by at least the configured interval so a hard/low Vertex quota is
+    // never burst past — avoids 429 storms that otherwise exhaust the Polly retries and drop
+    // symbols to no-vector. Disabled (zero overhead) when the interval is <= 0. State is shared
+    // across the singleton service, so the cap is global even under parallel batches.
+    private readonly SemaphoreSlim _rateGate = new(1, 1);
+    private long _nextSendMs; // Environment.TickCount64 of the next allowed send slot
+
     public async Task<float[]> EmbedAsync(string text, CancellationToken ct = default)
     {
         var batch = await EmbedSubBatchAsync([text], ct);
@@ -106,6 +114,10 @@ public sealed class VertexEmbeddingService(
 
             var response = await _pipeline.ExecuteAsync(async token =>
             {
+                // Slow-feed gate INSIDE the retry loop: every attempt — the first AND every Polly
+                // retry — claims a rate slot. Gating only before the pipeline would leave 429-driven
+                // retries un-throttled, and those bursts re-trigger the very 429s we're avoiding.
+                await ThrottleAsync(token);
                 using var message = new HttpRequestMessage(HttpMethod.Post, url)
                 {
                     Content = JsonContent.Create(request, options: JsonOptions)
@@ -215,6 +227,35 @@ public sealed class VertexEmbeddingService(
             _credLock.Release();
         }
         return _saProjectId;
+    }
+
+    /// <summary>
+    /// Rate-limit gate: when <see cref="EmbeddingOptions.VertexMinRequestIntervalMs"/> &gt; 0, block
+    /// until this call's slot so successive :predict requests are at least that many ms apart.
+    /// Each caller atomically claims the next monotonically-increasing slot under a lock, then waits
+    /// outside the lock — so concurrent batches queue without serializing the whole delay. No-op
+    /// (returns immediately, no lock) when the interval is disabled.
+    /// </summary>
+    private async Task ThrottleAsync(CancellationToken ct)
+    {
+        var intervalMs = _options.VertexMinRequestIntervalMs;
+        if (intervalMs <= 0) return;
+
+        long slotMs;
+        await _rateGate.WaitAsync(ct);
+        try
+        {
+            var now = Environment.TickCount64;
+            slotMs = Math.Max(now, _nextSendMs);
+            _nextSendMs = slotMs + intervalMs;
+        }
+        finally
+        {
+            _rateGate.Release();
+        }
+
+        var waitMs = slotMs - Environment.TickCount64;
+        if (waitMs > 0) await Task.Delay((int)waitMs, ct);
     }
 
     private static IEnumerable<IList<T>> Chunk<T>(IList<T> source, int size)

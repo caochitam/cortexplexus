@@ -330,6 +330,10 @@ void ConfigureServices(IServiceCollection services, string[] args, IConfiguratio
             options.MaxParallelBatches = mpb;
         if (int.TryParse(EmbedCfg("VertexInstancesPerCall", "Embedding__VertexInstancesPerCall"), out var ipc))
             options.VertexInstancesPerCall = ipc;
+        // Proactive slow-feed rate limiter: min ms between :predict calls (0 = off). Set on
+        // projects whose Vertex embedding quota is a hard ceiling that bursting always 429s.
+        if (int.TryParse(EmbedCfg("VertexMinRequestIntervalMs", "Embedding__VertexMinRequestIntervalMs"), out var vmri) && vmri > 0)
+            options.VertexMinRequestIntervalMs = vmri;
     });
 
     // AI summary generation (optional, uses LLM)

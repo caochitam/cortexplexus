@@ -42,6 +42,18 @@ public sealed record EmbeddingOptions
     public int VertexInstancesPerCall { get; set; } = 5;
 
     /// <summary>
+    /// Minimum milliseconds between successive Vertex <c>:predict</c> HTTP calls — a proactive
+    /// client-side rate limiter. <c>0</c> (default) = disabled; calls fire as fast as the pipeline
+    /// issues them. Set &gt; 0 on projects with a hard/low Vertex embedding quota to "slow-feed"
+    /// requests and avoid 429 <c>RESOURCE_EXHAUSTED</c> storms — which otherwise burn the Polly
+    /// retries and leave symbols with no vector (PARTIAL coverage). Enforced globally across the
+    /// singleton service, so it caps the aggregate request rate even when
+    /// <see cref="MaxParallelBatches"/> &gt; 1. Trades wall-clock for completeness: a one-time full
+    /// backfill runs slower but reaches ~100% coverage.
+    /// </summary>
+    public int VertexMinRequestIntervalMs { get; set; } = 0;
+
+    /// <summary>
     /// Vertex API key (express-mode, sent on the <c>?key=</c> query string — NOT
     /// OAuth/bearer). Supplied at runtime only (UserSecrets / env var); never
     /// committed. Falls back to <see cref="ApiKey"/> if unset.

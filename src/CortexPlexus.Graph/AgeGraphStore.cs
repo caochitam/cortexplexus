@@ -145,7 +145,13 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
     // (acceptable linear growth at that scale), while the server-side
     // IndexingPipeline (which passes ALL edges in one call) triggers bulk-load
     // for large repos. Tune based on profiling.
-    private const int EdgeBulkLoadThreshold = 20_000;
+    // Route every reindex (not just huge full rebuilds) through the bulk delete-by-source + CREATE
+    // path, whose vertex MATCH…WHERE is index-eligible (idx_<label>_fqn). The old 20k cutoff sent
+    // incremental reindexes — a few changed files, well under 20k edges — down the MERGE path, whose
+    // inline `{fqn:…}` match Seq-Scans every vertex label per edge (the dominant cost of an
+    // incremental update). delete+create is also more correct for incrementals: it drops edges a
+    // changed source no longer has, which the idempotent MERGE path would leave stale.
+    private const int EdgeBulkLoadThreshold = 1;
 
     public async Task UpsertEdgesAsync(IEnumerable<Relationship> relationships, CancellationToken ct = default)
     {
@@ -229,18 +235,31 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         IReadOnlyList<string> srcFqns,
         CancellationToken ct)
     {
-        // Chunk to avoid massive Cypher strings; 500 FQNs at a time.
+        // Delete outgoing edges of the given source vertices via NATIVE SQL, not Cypher. The Cypher
+        // form `MATCH (n)-[r]->() WHERE n.fqn IN [...] DELETE r` measured ~37 s here — AGE's per-row
+        // agtype execution is ~1000x slower than plain SQL over the same tables. The equivalent
+        // native DELETE on the parent `_ag_label_edge` (cascades to every child edge label) over the
+        // same ~93K rows runs in ~40 ms. Source vertices resolve by fqn through idx_<label>_fqn; edges
+        // match on start_id. The connection already has `ag_catalog` on its search_path (SetAgePath in
+        // UpsertEdgesAsync), so agtype / agtype_access_operator resolve. Each FQN is embedded as an
+        // agtype string literal via JSON serialization (always valid agtype; agtype string equality is
+        // by value, so escaping form is irrelevant) with single quotes doubled for SQL safety.
         foreach (var chunk in Chunk((IList<string>)srcFqns, 500))
         {
             var sb = new System.Text.StringBuilder(chunk.Count * 80);
-            sb.Append("MATCH (n)-[r]->() WHERE n.fqn IN [");
+            sb.Append(@"DELETE FROM code_graph.""_ag_label_edge"" e WHERE e.start_id IN (")
+              .Append(@"SELECT v.id FROM code_graph.""_ag_label_vertex"" v WHERE ")
+              .Append(@"agtype_access_operator(VARIADIC ARRAY[v.properties, '""fqn""'::agtype]) = ANY(ARRAY[");
             for (var i = 0; i < chunk.Count; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('\'').Append(EscapeCypher(chunk[i])).Append('\'');
+                var json = System.Text.Json.JsonSerializer.Serialize(chunk[i]);
+                sb.Append('\'').Append(json.Replace("'", "''")).Append("'::agtype");
             }
-            sb.Append("] DELETE r");
-            await ExecuteCypher(conn, sb.ToString(), ct);
+            sb.Append("]))");
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sb.ToString();
+            await cmd.ExecuteNonQueryAsync(ct);
         }
     }
 
@@ -278,8 +297,13 @@ public sealed class AgeGraphStore(NpgsqlDataSource dataSource, ILogger<AgeGraphS
         sb.Append("] AS e ");
         // MATCH instead of MERGE — vertices were created in the node phase.
         // CREATE instead of MERGE — edges were deleted by DeleteEdgesBySourceFqns.
-        sb.Append("MATCH (a {fqn: e.src}) ");
-        sb.Append("MATCH (b {fqn: e.dst}) ");
+        // Use `MATCH (a) WHERE a.fqn = e.src` rather than the inline `MATCH (a {fqn: e.src})` map:
+        // the inline form compiles to a `properties @> {fqn:...}` containment filter that the planner
+        // runs as a Seq Scan over EVERY vertex label (per edge — the edge-write bottleneck), while
+        // the WHERE form compiles to `agtype_access_operator(properties,'"fqn"') = ...` which hits the
+        // per-label btree idx_<label>_fqn (verified via EXPLAIN: Index Scan vs full Seq Scan).
+        sb.Append("MATCH (a) WHERE a.fqn = e.src ");
+        sb.Append("MATCH (b) WHERE b.fqn = e.dst ");
         sb.Append("CREATE (a)-[r:").Append(edgeLabel).Append("]->(b) ");
         sb.Append("SET r.type = '").Append(edgeLabel).Append('\'');
 
